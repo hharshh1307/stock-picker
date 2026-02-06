@@ -1,0 +1,26 @@
+[project]
+name = "stock-picker"
+version = "0.1.0"
+description = "Nifty 500 stock data pipeline - price, financials, and news aggregation"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    # Data pipeline
+    "yfinance>=0.2.40",
+    "niftystocks>=0.1.2",
+    "gnews>=0.4.3",
+    "feedparser>=6.0.11",
+    "nselib>=2.4.2",
+    "pandas>=2.2.0",
+    "requests>=2.31.0",
+    "python-dateutil>=2.9.0",
+    # API server
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "sse-starlette>=2.0.0",
+    # AI agent
+    "openai>=1.68.0",
+    "python-dotenv>=1.0.1",
+    "tiktoken>=0.8.0",
+    "duckduckgo-search>=7.0.0",
+]

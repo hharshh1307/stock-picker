@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.venv/
+
+# Data & logs
+data/*.db
+data/*.sqlite
+data/*.db-shm
+data/*.db-wal
+logs/*.log
+*.log
+
+# Environment - NEVER commit these
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Lock files (optional, can be large)
+uv.lock
+
+# Secrets
+*.pem
+*.key
+credentials*.json
