@@ -8,8 +8,7 @@ build/
 .venv/
 
 # Data & logs
-data/*.db
-data/*.sqlite
+# Note: stock_picker.db is tracked for deployment (see git lfs or direct commit)
 data/*.db-shm
 data/*.db-wal
 logs/*.log

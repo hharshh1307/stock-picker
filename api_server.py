@@ -38,10 +38,23 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS for frontend
+# CORS for frontend (allow Vercel deployments)
+import os
+
+ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+
+# Add production frontend URL from environment
+if frontend_url := os.getenv("FRONTEND_URL"):
+    ALLOWED_ORIGINS.append(frontend_url)
+
+# Allow all Vercel preview deployments
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=ALLOWED_ORIGINS,
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -77,13 +90,15 @@ app.include_router(stocks.router, prefix="/api/stocks", tags=["stocks"])
 app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
 
 
-def run_server(host: str = "0.0.0.0", port: int = 8000, reload: bool = False):
+def run_server(host: str = "0.0.0.0", port: int | None = None, reload: bool = False):
     """Run the FastAPI server."""
     import uvicorn
+    # Use PORT env var (for Railway/Render) or default to 8000
+    actual_port = port or int(os.getenv("PORT", 8000))
     uvicorn.run(
         "api_server:app",
         host=host,
-        port=port,
+        port=actual_port,
         reload=reload,
     )
 
