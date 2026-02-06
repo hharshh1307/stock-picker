@@ -34,3 +34,8 @@ uv.lock
 *.pem
 *.key
 credentials*.json
+
+# Frontend (web/)
+web/node_modules/
+web/.next/
+web/.env.local
