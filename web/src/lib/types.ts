@@ -128,3 +128,25 @@ export interface ChatStreamEvent {
   arguments?: Record<string, unknown>;
   result_preview?: string;
 }
+
+export interface UserProfile {
+  risk_tolerance: string;
+  total_capital: number;
+  expected_returns: number;
+}
+
+export interface InvestmentPlan {
+  id?: number;
+  frequency: string;
+  allocated_amount: number;
+  description?: string;
+}
+
+export interface PortfolioItem {
+  id?: number;
+  symbol: string;
+  quantity: number;
+  average_buy_price: number;
+  strategy_frequency?: string;
+  added_at?: string;
+}

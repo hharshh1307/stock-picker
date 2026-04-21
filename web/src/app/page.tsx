@@ -9,14 +9,15 @@ export const revalidate = 300; // Revalidate every 5 minutes
 
 async function getDiscoveryData() {
   try {
-    const [marketPulse, sectors, buckets, movers] = await Promise.all([
+    const [marketPulse, sectors, buckets, movers, plans] = await Promise.all([
       api.discovery.getMarketPulse(),
       api.discovery.getSectors(),
       api.discovery.getBuckets(6),
       api.discovery.getMovers(10),
+      api.user.getPlans().catch(() => []), // gracefully handle if user API fails
     ]);
 
-    return { marketPulse, sectors, buckets, movers, error: null };
+    return { marketPulse, sectors, buckets, movers, plans, error: null };
   } catch (error) {
     console.error("Failed to fetch discovery data:", error);
     return {
@@ -24,13 +25,14 @@ async function getDiscoveryData() {
       sectors: null,
       buckets: null,
       movers: null,
+      plans: [],
       error: "Failed to load data. Make sure the API server is running.",
     };
   }
 }
 
 export default async function DiscoveryPage() {
-  const { marketPulse, sectors, buckets, movers, error } = await getDiscoveryData();
+  const { marketPulse, sectors, buckets, movers, plans, error } = await getDiscoveryData();
 
   if (error) {
     return (
@@ -51,8 +53,20 @@ export default async function DiscoveryPage() {
       {/* Header */}
       <div>
         <h1 className="text-3xl font-bold">Discovery</h1>
-        <p className="text-zinc-400 mt-1">Explore trending stocks across Nifty 500</p>
+        <p className="text-zinc-400 mt-1">Explore trending assets tailored for your strategies</p>
       </div>
+
+      {plans && plans.length > 0 && (
+        <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-4 flex gap-4 items-center overflow-x-auto">
+          <span className="text-sm font-semibold text-emerald-400 whitespace-nowrap">Active Plans:</span>
+          {plans.map(plan => (
+            <div key={plan.id} className="bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-sm whitespace-nowrap">
+              <span className="text-zinc-300">{plan.frequency}: </span>
+              <span className="font-medium text-emerald-400">₹{plan.allocated_amount}</span>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Market Pulse & Sectors */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

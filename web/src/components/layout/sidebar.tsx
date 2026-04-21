@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BarChart3, MessageCircle, TrendingUp, Search } from "lucide-react";
+import { BarChart3, MessageCircle, TrendingUp, Briefcase, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const navItems = [
@@ -17,6 +17,18 @@ const navItems = [
     href: "/chat",
     icon: MessageCircle,
     description: "AI stock analyst",
+  },
+  {
+    title: "Portfolio",
+    href: "/portfolio",
+    icon: Briefcase,
+    description: "Your holdings & performance",
+  },
+  {
+    title: "Settings & Plans",
+    href: "/settings",
+    icon: Settings,
+    description: "Risk & frequencies",
   },
 ];
 

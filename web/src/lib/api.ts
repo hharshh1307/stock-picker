@@ -99,6 +99,41 @@ export const api = {
       }
     },
   },
+
+  user: {
+    getProfile: () =>
+      fetchAPI<import('./types').UserProfile>('/api/user/profile'),
+    
+    updateProfile: (profile: import('./types').UserProfile) =>
+      fetchAPI<{status: string}>('/api/user/profile', {
+        method: 'POST',
+        body: JSON.stringify(profile),
+      }),
+      
+    getPlans: () =>
+      fetchAPI<import('./types').InvestmentPlan[]>('/api/user/plans'),
+      
+    upsertPlan: (plan: import('./types').InvestmentPlan) =>
+      fetchAPI<{status: string}>('/api/user/plans', {
+        method: 'POST',
+        body: JSON.stringify(plan),
+      }),
+      
+    deletePlan: (id: number) =>
+      fetchAPI<{status: string}>(`/api/user/plans/${id}`, { method: 'DELETE' }),
+      
+    getPortfolio: () =>
+      fetchAPI<import('./types').PortfolioItem[]>('/api/user/portfolio'),
+      
+    upsertPortfolioItem: (item: import('./types').PortfolioItem) =>
+      fetchAPI<{status: string}>('/api/user/portfolio', {
+        method: 'POST',
+        body: JSON.stringify(item),
+      }),
+      
+    deletePortfolioItem: (id: number) =>
+      fetchAPI<{status: string}>(`/api/user/portfolio/${id}`, { method: 'DELETE' }),
+  },
 };
 
 // Format helpers

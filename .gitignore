@@ -38,3 +38,6 @@ credentials*.json
 web/node_modules/
 web/.next/
 web/.env.local
+
+# Test database
+test.db

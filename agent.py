@@ -35,23 +35,35 @@ class FinancialExpertAgent:
         self.temperature = temperature
         self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-        # Get context for system prompt
-        counts = store.get_table_counts()
-        sectors = store.get_all_sectors()
+        self.update_system_prompt()
 
-        # Get latest price date
-        row = store.conn.execute("SELECT MAX(date) as latest FROM prices").fetchone()
+        # Conversation history
+        self.messages: list[dict] = []
+        self._token_count = 0
+
+    def update_system_prompt(self) -> None:
+        """Update the system prompt with fresh data from the store."""
+        counts = self.store.get_table_counts()
+        sectors = self.store.get_all_sectors()
+        
+        row = self.store.conn.execute("SELECT MAX(date) as latest FROM prices").fetchone()
         latest_date = row["latest"] if row else None
+        
+        from agent_tools import get_user_portfolio, get_investment_plans
+        portfolio = get_user_portfolio(self.store)
+        plans = get_investment_plans(self.store)
 
         self.system_prompt = build_system_prompt(
             total_stocks=counts.get("stocks", 500),
             total_sectors=len(sectors),
             latest_price_date=latest_date,
+            portfolio=portfolio,
+            plans=plans,
         )
-
-        # Conversation history
-        self.messages: list[dict] = []
-        self._token_count = 0
+        
+        # Update the system message if it already exists in the conversation history
+        if self.messages and self.messages[0].get("role") == "system":
+            self.messages[0]["content"] = self.system_prompt
 
     def _estimate_tokens(self, text: str) -> int:
         """Rough token estimate (4 chars per token on average)."""
@@ -102,6 +114,9 @@ class FinancialExpertAgent:
         self, user_message: str, conversation_id: str | None = None
     ) -> Generator[dict, None, None]:
         """Stream response chunks synchronously."""
+        # Always inject the latest portfolio and context before starting
+        self.update_system_prompt()
+
         # Check if we need to summarize
         if self._should_summarize():
             self._summarize_history()
