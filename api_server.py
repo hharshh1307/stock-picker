@@ -43,7 +43,10 @@ import os
 
 ALLOWED_ORIGINS = [
     "http://localhost:3000",
+    "http://localhost:3001",
+    "http://localhost:3002",
     "http://127.0.0.1:3000",
+    "http://127.0.0.1:3001",
 ]
 
 # Add production frontend URL from environment
@@ -72,6 +75,7 @@ async def root() -> dict[str, Any]:
             "discovery": "/api/discovery/*",
             "stocks": "/api/stocks/*",
             "chat": "/api/chat",
+            "user": "/api/user/*",
         },
     }
 
@@ -83,11 +87,12 @@ async def health() -> dict[str, str]:
 
 
 # Import and include routers
-from api_routes import discovery, stocks, chat
+from api_routes import discovery, stocks, chat, user
 
 app.include_router(discovery.router, prefix="/api/discovery", tags=["discovery"])
 app.include_router(stocks.router, prefix="/api/stocks", tags=["stocks"])
 app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
+app.include_router(user.router, prefix="/api/user", tags=["user"])
 
 
 def run_server(host: str = "0.0.0.0", port: int | None = None, reload: bool = False):

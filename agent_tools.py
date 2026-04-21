@@ -400,6 +400,43 @@ def web_search(query: str, max_results: int = 5) -> list[dict]:
         return [{"error": f"Web search failed: {str(e)}"}]
 
 
+def get_user_portfolio(store: DataStore) -> dict:
+    """Get the user's current manual portfolio and profile."""
+    items = store.get_portfolio_items()
+    profile = store.get_user_profile()
+    
+    portfolio_value = sum(item.quantity * item.average_buy_price for item in items)
+    
+    return {
+        "profile": {
+            "risk_tolerance": profile.risk_tolerance if profile else "Unknown",
+            "total_capital": profile.total_capital if profile else 0,
+            "expected_returns": profile.expected_returns if profile else 0,
+        },
+        "total_portfolio_value": portfolio_value,
+        "holdings": [
+            {
+                "symbol": item.symbol,
+                "quantity": item.quantity,
+                "average_buy_price": item.average_buy_price,
+                "strategy_frequency": item.strategy_frequency,
+            }
+            for item in items
+        ]
+    }
+
+def get_investment_plans(store: DataStore) -> list[dict]:
+    """Get the user's configured investment plans (e.g., Weekly ₹500)."""
+    plans = store.get_investment_plans()
+    return [
+        {
+            "frequency": plan.frequency,
+            "allocated_amount": plan.allocated_amount,
+            "description": plan.description,
+        }
+        for plan in plans
+    ]
+
 # --- OpenAI Function Schemas ---
 
 TOOL_SCHEMAS = [
@@ -650,11 +687,35 @@ TOOL_SCHEMAS = [
                     },
                     "max_results": {
                         "type": "integer",
-                        "description": "Maximum results (default: 5)",
-                        "default": 5
+                        "description": "Maximum results (default: 10)",
+                        "default": 10
                     }
                 },
                 "required": ["query"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_user_portfolio",
+            "description": "Get the user's current portfolio holdings, total value, and risk profile.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_investment_plans",
+            "description": "Get the user's configured investment plans (e.g., Daily, Weekly, Monthly allocations).",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": []
             }
         }
     }
@@ -676,7 +737,9 @@ def execute_tool(store: DataStore, tool_name: str, arguments: dict[str, Any]) ->
         "get_news": lambda args: get_news(store, args.get("symbol"), args.get("limit", 15)),
         "compare_stocks": lambda args: compare_stocks(store, args["symbols"]),
         "calculate_valuation_metrics": lambda args: calculate_valuation_metrics(store, args["symbol"]),
-        "web_search": lambda args: web_search(args["query"], args.get("max_results", 5)),
+        "web_search": lambda args: web_search(args["query"], args.get("max_results", 10)),
+        "get_user_portfolio": lambda args: get_user_portfolio(store),
+        "get_investment_plans": lambda args: get_investment_plans(store),
     }
 
     if tool_name not in tool_map:

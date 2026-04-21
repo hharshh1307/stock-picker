@@ -19,15 +19,26 @@ class DataSource(Enum):
     NIFTYSTOCKS = "niftystocks"
 
 
+class AssetType(Enum):
+    STOCK = "stock"
+    MUTUAL_FUND = "mutual_fund"
+    ETF = "etf"
+    INDEX = "index"
+
+
 @dataclass
-class Stock:
+class Asset:
     symbol: str
     yahoo_symbol: str
     company_name: str
+    asset_type: AssetType = AssetType.STOCK
     sector: Optional[str] = None
     industry: Optional[str] = None
     last_updated: Optional[datetime] = None
 
+
+# Alias for backward compatibility during transition
+Stock = Asset
 
 @dataclass
 class PriceRecord:
@@ -72,3 +83,29 @@ class FetchLog:
     started_at: datetime = field(default_factory=datetime.now)
     completed_at: Optional[datetime] = None
     source: Optional[DataSource] = None
+
+
+@dataclass
+class UserProfile:
+    id: Optional[int]
+    risk_tolerance: str  # 'low', 'medium', 'high'
+    total_capital: float
+    expected_returns: float
+
+
+@dataclass
+class InvestmentPlan:
+    id: Optional[int]
+    frequency: str  # 'Daily', 'Weekly', 'Monthly', 'Yearly', 'Long-term'
+    allocated_amount: float
+    description: Optional[str] = None
+
+
+@dataclass
+class PortfolioItem:
+    id: Optional[int]
+    symbol: str
+    quantity: float
+    average_buy_price: float
+    strategy_frequency: Optional[str] = None
+    added_at: datetime = field(default_factory=datetime.now)

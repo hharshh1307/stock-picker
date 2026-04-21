@@ -11,16 +11,29 @@ from models import (
     NewsArticle,
     FetchLog,
     FetchStatus,
+    AssetType,
+    UserProfile,
+    InvestmentPlan,
+    PortfolioItem,
 )
 from utils import setup_logger
 
 logger = setup_logger(__name__)
+
+
+def _safe_get(row: sqlite3.Row, key: str, default=None):
+    """Safely get a value from sqlite3.Row, which doesn't support .get()."""
+    try:
+        return row[key]
+    except (IndexError, KeyError):
+        return default
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS stocks (
     symbol TEXT PRIMARY KEY,
     yahoo_symbol TEXT NOT NULL,
     company_name TEXT NOT NULL,
+    asset_type TEXT DEFAULT 'stock',
     sector TEXT,
     industry TEXT,
     last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -93,6 +106,30 @@ CREATE TABLE IF NOT EXISTS fetch_log (
     completed_at TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_fetch_log_script ON fetch_log(script_name, started_at);
+
+CREATE TABLE IF NOT EXISTS user_profiles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    risk_tolerance TEXT NOT NULL,
+    total_capital REAL NOT NULL,
+    expected_returns REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS investment_plans (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    frequency TEXT NOT NULL,
+    allocated_amount REAL NOT NULL,
+    description TEXT
+);
+
+CREATE TABLE IF NOT EXISTS portfolio_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    symbol TEXT NOT NULL,
+    quantity REAL NOT NULL,
+    average_buy_price REAL NOT NULL,
+    strategy_frequency TEXT,
+    added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (symbol) REFERENCES stocks(symbol)
+);
 """
 
 
@@ -109,6 +146,16 @@ class DataStore:
     def initialize_schema(self) -> None:
         self.conn.executescript(SCHEMA_SQL)
         self.conn.commit()
+        self._migrate_schema()
+
+    def _migrate_schema(self) -> None:
+        """Add columns that may be missing from older databases."""
+        try:
+            self.conn.execute("SELECT asset_type FROM stocks LIMIT 1")
+        except sqlite3.OperationalError:
+            logger.info("Migrating stocks table: adding asset_type column")
+            self.conn.execute("ALTER TABLE stocks ADD COLUMN asset_type TEXT DEFAULT 'stock'")
+            self.conn.commit()
 
     def close(self) -> None:
         self.conn.close()
@@ -119,15 +166,16 @@ class DataStore:
         count = 0
         for s in stocks:
             self.conn.execute(
-                """INSERT INTO stocks (symbol, yahoo_symbol, company_name, sector, industry, last_updated)
-                   VALUES (?, ?, ?, ?, ?, ?)
+                """INSERT INTO stocks (symbol, yahoo_symbol, company_name, asset_type, sector, industry, last_updated)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)
                    ON CONFLICT(symbol) DO UPDATE SET
                      yahoo_symbol=excluded.yahoo_symbol,
                      company_name=excluded.company_name,
+                     asset_type=excluded.asset_type,
                      sector=excluded.sector,
                      industry=excluded.industry,
                      last_updated=excluded.last_updated""",
-                (s.symbol, s.yahoo_symbol, s.company_name, s.sector, s.industry,
+                (s.symbol, s.yahoo_symbol, s.company_name, s.asset_type.value, s.sector, s.industry,
                  s.last_updated or datetime.now()),
             )
             count += 1
@@ -141,6 +189,7 @@ class DataStore:
                 symbol=r["symbol"],
                 yahoo_symbol=r["yahoo_symbol"],
                 company_name=r["company_name"],
+                asset_type=AssetType(_safe_get(r, "asset_type", "stock")),
                 sector=r["sector"],
                 industry=r["industry"],
                 last_updated=r["last_updated"],
@@ -156,6 +205,7 @@ class DataStore:
             symbol=r["symbol"],
             yahoo_symbol=r["yahoo_symbol"],
             company_name=r["company_name"],
+            asset_type=AssetType(_safe_get(r, "asset_type", "stock")),
             sector=r["sector"],
             industry=r["industry"],
             last_updated=r["last_updated"],
@@ -164,8 +214,12 @@ class DataStore:
     # --- Prices ---
 
     def upsert_prices(self, prices: list[PriceRecord]) -> int:
+        import math
         count = 0
         for p in prices:
+            # Skip records with missing close price (yfinance returns NaN for incomplete data)
+            if p.close is None or (isinstance(p.close, float) and math.isnan(p.close)):
+                continue
             self.conn.execute(
                 """INSERT INTO prices (symbol, date, open, high, low, close, adj_close, volume, source)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -337,6 +391,7 @@ class DataStore:
                 symbol=r["symbol"],
                 yahoo_symbol=r["yahoo_symbol"],
                 company_name=r["company_name"],
+                asset_type=AssetType(_safe_get(r, "asset_type", "stock")),
                 sector=r["sector"],
                 industry=r["industry"],
                 last_updated=r["last_updated"],
@@ -353,7 +408,7 @@ class DataStore:
         return [dict(r) for r in rows]
 
     def get_table_counts(self) -> dict[str, int]:
-        tables = ["stocks", "prices", "quarterly_financials", "news", "index_data"]
+        tables = ["stocks", "prices", "quarterly_financials", "news", "index_data", "portfolio_items"]
         counts = {}
         for t in tables:
             row = self.conn.execute(f"SELECT COUNT(*) as cnt FROM {t}").fetchone()
@@ -379,6 +434,7 @@ class DataStore:
                 symbol=r["symbol"],
                 yahoo_symbol=r["yahoo_symbol"],
                 company_name=r["company_name"],
+                asset_type=AssetType(_safe_get(r, "asset_type", "stock")),
                 sector=r["sector"],
                 industry=r["industry"],
                 last_updated=r["last_updated"],
@@ -422,6 +478,7 @@ class DataStore:
             "symbol": stock.symbol,
             "yahoo_symbol": stock.yahoo_symbol,
             "company_name": stock.company_name,
+            "asset_type": stock.asset_type.value,
             "sector": stock.sector,
             "industry": stock.industry,
             "latest_price": latest["close"] if latest else None,
@@ -506,3 +563,86 @@ class DataStore:
             (symbol, limit),
         ).fetchall()
         return [dict(r) for r in rows]
+
+    # --- Portfolio & Investment Plans ---
+
+    def get_user_profile(self) -> Optional[UserProfile]:
+        r = self.conn.execute("SELECT * FROM user_profiles ORDER BY id LIMIT 1").fetchone()
+        if not r:
+            return None
+        return UserProfile(
+            id=r["id"],
+            risk_tolerance=r["risk_tolerance"],
+            total_capital=r["total_capital"],
+            expected_returns=r["expected_returns"]
+        )
+
+    def upsert_user_profile(self, profile: UserProfile) -> None:
+        self.conn.execute("DELETE FROM user_profiles")
+        self.conn.execute(
+            """INSERT INTO user_profiles (risk_tolerance, total_capital, expected_returns)
+               VALUES (?, ?, ?)""",
+            (profile.risk_tolerance, profile.total_capital, profile.expected_returns)
+        )
+        self.conn.commit()
+
+    def get_investment_plans(self) -> list[InvestmentPlan]:
+        rows = self.conn.execute("SELECT * FROM investment_plans ORDER BY id").fetchall()
+        return [
+            InvestmentPlan(
+                id=r["id"],
+                frequency=r["frequency"],
+                allocated_amount=r["allocated_amount"],
+                description=r["description"]
+            )
+            for r in rows
+        ]
+
+    def upsert_investment_plan(self, plan: InvestmentPlan) -> None:
+        if plan.id:
+            self.conn.execute(
+                """UPDATE investment_plans SET frequency=?, allocated_amount=?, description=? WHERE id=?""",
+                (plan.frequency, plan.allocated_amount, plan.description, plan.id)
+            )
+        else:
+            self.conn.execute(
+                """INSERT INTO investment_plans (frequency, allocated_amount, description) VALUES (?, ?, ?)""",
+                (plan.frequency, plan.allocated_amount, plan.description)
+            )
+        self.conn.commit()
+
+    def delete_investment_plan(self, plan_id: int) -> None:
+        self.conn.execute("DELETE FROM investment_plans WHERE id=?", (plan_id,))
+        self.conn.commit()
+
+    def get_portfolio_items(self) -> list[PortfolioItem]:
+        rows = self.conn.execute("SELECT * FROM portfolio_items ORDER BY id").fetchall()
+        return [
+            PortfolioItem(
+                id=r["id"],
+                symbol=r["symbol"],
+                quantity=r["quantity"],
+                average_buy_price=r["average_buy_price"],
+                strategy_frequency=r["strategy_frequency"],
+                added_at=datetime.fromisoformat(r["added_at"]) if isinstance(r["added_at"], str) else r["added_at"]
+            )
+            for r in rows
+        ]
+
+    def upsert_portfolio_item(self, item: PortfolioItem) -> None:
+        if item.id:
+            self.conn.execute(
+                """UPDATE portfolio_items SET symbol=?, quantity=?, average_buy_price=?, strategy_frequency=? WHERE id=?""",
+                (item.symbol, item.quantity, item.average_buy_price, item.strategy_frequency, item.id)
+            )
+        else:
+            self.conn.execute(
+                """INSERT INTO portfolio_items (symbol, quantity, average_buy_price, strategy_frequency, added_at)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (item.symbol, item.quantity, item.average_buy_price, item.strategy_frequency, item.added_at.isoformat())
+            )
+        self.conn.commit()
+
+    def delete_portfolio_item(self, item_id: int) -> None:
+        self.conn.execute("DELETE FROM portfolio_items WHERE id=?", (item_id,))
+        self.conn.commit()
