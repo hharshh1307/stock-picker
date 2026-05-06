@@ -130,6 +130,71 @@ CREATE TABLE IF NOT EXISTS portfolio_items (
     added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (symbol) REFERENCES stocks(symbol)
 );
+
+-- ── Signal RAG Pipeline ──────────────────────────────────────────────────────
+
+-- ML retrieval output: top-K candidates per day × frequency
+CREATE TABLE IF NOT EXISTS signal_candidates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date DATE NOT NULL,
+    frequency TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    ml_rank INTEGER NOT NULL,
+    ml_score_1m REAL,
+    ml_outperform_prob REAL,
+    predicted_return_1m_pct REAL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(date, frequency, symbol)
+);
+CREATE INDEX IF NOT EXISTS idx_candidates_date_freq ON signal_candidates(date, frequency);
+
+-- AI analysis + user decision per candidate
+CREATE TABLE IF NOT EXISTS signal_decisions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    candidate_id INTEGER NOT NULL,
+    date DATE NOT NULL,
+    frequency TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    -- AI stage
+    ai_recommendation TEXT,        -- BUY / HOLD / SKIP
+    ai_confidence REAL,            -- 0.0–1.0
+    ai_reasoning TEXT,             -- 2-3 sentence rationale
+    -- User stage
+    user_action TEXT DEFAULT 'PENDING',  -- PENDING / APPROVED / REJECTED / SKIPPED
+    user_notes TEXT,
+    actioned_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (candidate_id) REFERENCES signal_candidates(id)
+);
+CREATE INDEX IF NOT EXISTS idx_decisions_date_freq ON signal_decisions(date, frequency);
+CREATE INDEX IF NOT EXISTS idx_decisions_symbol ON signal_decisions(symbol);
+
+-- Actual price outcomes (back-filled after holding period)
+CREATE TABLE IF NOT EXISTS signal_outcomes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    decision_id INTEGER NOT NULL UNIQUE,
+    actual_return_pct REAL,        -- stock return over holding period
+    nifty500_return_pct REAL,      -- index return over same period
+    alpha_pct REAL,                -- actual_return - nifty500_return
+    outcome_date DATE,
+    recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (decision_id) REFERENCES signal_decisions(id)
+);
+
+-- Periodic analysis snapshots (written by the analysis pipeline)
+CREATE TABLE IF NOT EXISTS signal_analysis (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    analysis_date DATE NOT NULL,
+    frequency TEXT NOT NULL,
+    lookback_days INTEGER NOT NULL,
+    recall_at_k REAL,              -- fraction of winners that appeared in top-K
+    ai_accuracy REAL,              -- approved BUYs that were actually profitable
+    user_agreement_rate REAL,      -- how often user approved AI BUY
+    avg_alpha_pct REAL,            -- avg alpha vs Nifty 500 on approved trades
+    sample_size INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(analysis_date, frequency, lookback_days)
+);
 """
 
 

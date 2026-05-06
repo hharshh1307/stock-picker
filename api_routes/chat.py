@@ -14,6 +14,7 @@ class ChatRequest(BaseModel):
     """Chat request body."""
     message: str
     conversation_id: str | None = None
+    user_id: str | None = None
 
 
 class ChatSuggestion(BaseModel):
@@ -40,7 +41,7 @@ async def get_suggestions() -> list[dict[str, str]]:
     return [{"question": s.question, "category": s.category} for s in SUGGESTED_QUESTIONS]
 
 
-async def generate_response(message: str, conversation_id: str | None) -> AsyncGenerator[str, None]:
+async def generate_response(message: str, conversation_id: str | None, user_id: str | None = None) -> AsyncGenerator[str, None]:
     """Generate SSE events for the chat response.
 
     This is a placeholder that will be replaced with the actual agent implementation.
@@ -51,7 +52,7 @@ async def generate_response(message: str, conversation_id: str | None) -> AsyncG
         from api_server import get_store
 
         store = get_store()
-        agent = FinancialExpertAgent(store)
+        agent = FinancialExpertAgent(store, user_id=user_id, session_id=conversation_id)
 
         # Stream the response
         async for chunk in agent.stream_response(message, conversation_id):
@@ -62,7 +63,7 @@ async def generate_response(message: str, conversation_id: str | None) -> AsyncG
     except ImportError:
         # Agent not yet implemented - return a placeholder response
         yield f"data: {json.dumps({'type': 'text', 'content': 'The AI agent is not yet configured. '})}\n\n"
-        yield f"data: {json.dumps({'type': 'text', 'content': 'Please ensure OPENAI_API_KEY is set in your .env file '})}\n\n"
+        yield f"data: {json.dumps({'type': 'text', 'content': 'Please ensure GEMINI_API_KEY is set in your .env file '})}\n\n"
         yield f"data: {json.dumps({'type': 'text', 'content': 'and the agent module is properly installed.'})}\n\n"
         yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
@@ -75,7 +76,7 @@ async def generate_response(message: str, conversation_id: str | None) -> AsyncG
 async def chat(request: ChatRequest) -> StreamingResponse:
     """Chat endpoint with SSE streaming."""
     return StreamingResponse(
-        generate_response(request.message, request.conversation_id),
+        generate_response(request.message, request.conversation_id, request.user_id),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -93,7 +94,7 @@ async def chat_sync(request: ChatRequest) -> dict[str, Any]:
         from api_server import get_store
 
         store = get_store()
-        agent = FinancialExpertAgent(store)
+        agent = FinancialExpertAgent(store, user_id=request.user_id, session_id=request.conversation_id)
         response = agent.get_response(request.message, request.conversation_id)
 
         return {
@@ -105,7 +106,7 @@ async def chat_sync(request: ChatRequest) -> dict[str, Any]:
     except ImportError:
         return {
             "success": False,
-            "error": "Agent not configured. Set OPENAI_API_KEY in .env file.",
+            "error": "Agent not configured. Set GEMINI_API_KEY in .env file.",
         }
 
     except Exception as e:

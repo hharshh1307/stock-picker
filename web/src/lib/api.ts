@@ -59,11 +59,11 @@ export const api = {
       fetchAPI<import('./types').ChatSuggestion[]>('/api/chat/suggestions'),
 
     // For SSE streaming, we need to handle this differently
-    streamChat: async function* (message: string, conversationId?: string) {
+    streamChat: async function* (message: string, conversationId?: string, userId?: string) {
       const res = await fetch(`${API_BASE}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message, conversation_id: conversationId }),
+        body: JSON.stringify({ message, conversation_id: conversationId, user_id: userId }),
       });
 
       if (!res.ok) {
@@ -124,7 +124,10 @@ export const api = {
       
     getPortfolio: () =>
       fetchAPI<import('./types').PortfolioItem[]>('/api/user/portfolio'),
-      
+
+    getPortfolioPnl: () =>
+      fetchAPI<import('./types').PortfolioPnLResponse>('/api/user/portfolio/pnl'),
+
     upsertPortfolioItem: (item: import('./types').PortfolioItem) =>
       fetchAPI<{status: string}>('/api/user/portfolio', {
         method: 'POST',

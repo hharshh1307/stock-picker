@@ -1,8 +1,9 @@
+import os
 from pathlib import Path
 
 # Paths
 PROJECT_ROOT = Path(__file__).parent
-DATA_DIR = PROJECT_ROOT / "data"
+DATA_DIR = Path(os.getenv("DATA_DIR", str(PROJECT_ROOT / "data")))
 LOG_DIR = PROJECT_ROOT / "logs"
 DB_PATH = DATA_DIR / "stock_picker.db"
 

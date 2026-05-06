@@ -18,6 +18,10 @@ from market_intelligence import (
     get_volume_spikes,
 )
 
+# ── Request-scoped cache: avoids re-running expensive queries multiple times ──
+# Keyed by (id(store), days) so it resets naturally per server request.
+_price_change_cache: dict = {}
+
 
 @dataclass
 class BucketStock:
@@ -44,7 +48,7 @@ class Bucket:
 
 def _get_sparkline_data(store: DataStore, symbol: str, days: int = 30) -> list[float]:
     """Get the last N days of close prices for sparkline chart."""
-    cutoff = (date.today() - timedelta(days=days + 10)).isoformat()  # Buffer for weekends
+    cutoff = (date.today() - timedelta(days=days + 10)).isoformat()
     rows = store.conn.execute(
         """SELECT close FROM prices
            WHERE symbol = ? AND date >= ?
@@ -53,6 +57,25 @@ def _get_sparkline_data(store: DataStore, symbol: str, days: int = 30) -> list[f
         (symbol, cutoff, days),
     ).fetchall()
     return [r["close"] for r in rows]
+
+
+def _get_sparklines_batch(store: DataStore, symbols: list[str], days: int = 30) -> dict[str, list[float]]:
+    """Fetch sparklines for multiple symbols in ONE SQL query."""
+    if not symbols:
+        return {}
+    cutoff = (date.today() - timedelta(days=days + 10)).isoformat()
+    placeholders = ",".join("?" * len(symbols))
+    rows = store.conn.execute(
+        f"""SELECT symbol, close, date FROM prices
+            WHERE symbol IN ({placeholders}) AND date >= ?
+            ORDER BY symbol, date ASC""",
+        symbols + [cutoff],
+    ).fetchall()
+    result: dict[str, list[float]] = defaultdict(list)
+    for r in rows:
+        result[r["symbol"]].append(r["close"])
+    # Trim to last `days` values
+    return {s: v[-days:] for s, v in result.items()}
 
 
 def _get_latest_prices(store: DataStore, symbols: list[str]) -> dict[str, tuple[float, str]]:
@@ -73,7 +96,13 @@ def _get_latest_prices(store: DataStore, symbols: list[str]) -> dict[str, tuple[
 
 
 def _get_price_changes(store: DataStore, days: int = 30) -> list[dict]:
-    """Get price change % for all stocks over the last N days."""
+    """Get price change % for all stocks over the last N days.
+    Results are cached per (store_id, days) to avoid re-running across multiple buckets.
+    """
+    cache_key = (id(store), days)
+    if cache_key in _price_change_cache:
+        return _price_change_cache[cache_key]
+
     cutoff = (date.today() - timedelta(days=days)).isoformat()
     rows = store.conn.execute(
         """
@@ -92,7 +121,14 @@ def _get_price_changes(store: DataStore, days: int = 30) -> list[dict]:
         """,
         (cutoff,),
     ).fetchall()
-    return [dict(r) for r in rows]
+    result = [dict(r) for r in rows]
+    _price_change_cache[cache_key] = result
+    return result
+
+
+def _clear_price_cache():
+    """Call at the start of get_all_buckets to reset the per-request cache."""
+    _price_change_cache.clear()
 
 
 def get_momentum_leaders(store: DataStore, limit: int = 15) -> Bucket:
@@ -101,9 +137,9 @@ def get_momentum_leaders(store: DataStore, limit: int = 15) -> Bucket:
     changes.sort(key=lambda x: x["change_pct"], reverse=True)
     top = changes[:limit]
 
+    sparklines = _get_sparklines_batch(store, [s["symbol"] for s in top])
     stocks = []
     for s in top:
-        sparkline = _get_sparkline_data(store, s["symbol"])
         stocks.append(BucketStock(
             symbol=s["symbol"],
             company_name=s["company_name"],
@@ -113,7 +149,7 @@ def get_momentum_leaders(store: DataStore, limit: int = 15) -> Bucket:
             metric_label="30D Change",
             latest_price=s["end_price"],
             change_pct=round(s["change_pct"], 2),
-            sparkline_data=sparkline,
+            sparkline_data=sparklines.get(s["symbol"], []),
         ))
 
     return Bucket(
@@ -130,9 +166,9 @@ def get_beaten_down(store: DataStore, limit: int = 15) -> Bucket:
     changes.sort(key=lambda x: x["change_pct"])
     bottom = changes[:limit]
 
+    sparklines = _get_sparklines_batch(store, [s["symbol"] for s in bottom])
     stocks = []
     for s in bottom:
-        sparkline = _get_sparkline_data(store, s["symbol"])
         stocks.append(BucketStock(
             symbol=s["symbol"],
             company_name=s["company_name"],
@@ -142,7 +178,7 @@ def get_beaten_down(store: DataStore, limit: int = 15) -> Bucket:
             metric_label="30D Change",
             latest_price=s["end_price"],
             change_pct=round(s["change_pct"], 2),
-            sparkline_data=sparkline,
+            sparkline_data=sparklines.get(s["symbol"], []),
         ))
 
     return Bucket(
@@ -162,12 +198,12 @@ def get_volume_surge_bucket(store: DataStore, limit: int = 15) -> Bucket:
     latest_prices = _get_latest_prices(store, symbols)
     changes = {s["symbol"]: s for s in _get_price_changes(store, days=30)}
 
+    sparklines = _get_sparklines_batch(store, [s["symbol"] for s in spikes[:limit]])
     stocks = []
     for s in spikes:
         symbol = s["symbol"]
         price_info = latest_prices.get(symbol, (0, ""))
         change_info = changes.get(symbol, {})
-        sparkline = _get_sparkline_data(store, symbol)
 
         stocks.append(BucketStock(
             symbol=symbol,
@@ -178,7 +214,7 @@ def get_volume_surge_bucket(store: DataStore, limit: int = 15) -> Bucket:
             metric_label="Volume Ratio",
             latest_price=price_info[0],
             change_pct=round(change_info.get("change_pct", 0), 2),
-            sparkline_data=sparkline,
+            sparkline_data=sparklines.get(symbol, []),
         ))
 
     return Bucket(
@@ -238,13 +274,13 @@ def get_revenue_rockets(store: DataStore, limit: int = 15) -> Bucket:
     latest_prices = _get_latest_prices(store, symbols)
     changes = {s["symbol"]: s for s in _get_price_changes(store, days=30)}
 
+    sparklines = _get_sparklines_batch(store, [g["symbol"] for g in top])
     stocks = []
     for g in top:
         symbol = g["symbol"]
         stock = store.get_stock(symbol)
         price_info = latest_prices.get(symbol, (0, ""))
         change_info = changes.get(symbol, {})
-        sparkline = _get_sparkline_data(store, symbol)
 
         stocks.append(BucketStock(
             symbol=symbol,
@@ -255,7 +291,7 @@ def get_revenue_rockets(store: DataStore, limit: int = 15) -> Bucket:
             metric_label="QoQ Revenue Growth",
             latest_price=price_info[0],
             change_pct=round(change_info.get("change_pct", 0), 2),
-            sparkline_data=sparkline,
+            sparkline_data=sparklines.get(symbol, []),
         ))
 
     return Bucket(
@@ -308,12 +344,12 @@ def get_profit_machines(store: DataStore, limit: int = 15) -> Bucket:
     latest_prices = _get_latest_prices(store, symbols)
     changes = {s["symbol"]: s for s in _get_price_changes(store, days=30)}
 
+    sparklines = _get_sparklines_batch(store, [m["symbol"] for m in top])
     stocks = []
     for m in top:
         symbol = m["symbol"]
         price_info = latest_prices.get(symbol, (0, ""))
         change_info = changes.get(symbol, {})
-        sparkline = _get_sparkline_data(store, symbol)
 
         stocks.append(BucketStock(
             symbol=symbol,
@@ -324,7 +360,7 @@ def get_profit_machines(store: DataStore, limit: int = 15) -> Bucket:
             metric_label="Profit Margin %",
             latest_price=price_info[0],
             change_pct=round(change_info.get("change_pct", 0), 2),
-            sparkline_data=sparkline,
+            sparkline_data=sparklines.get(symbol, []),
         ))
 
     return Bucket(
@@ -363,11 +399,11 @@ def get_near_52w_high(store: DataStore, limit: int = 15) -> Bucket:
 
     changes = {s["symbol"]: s for s in _get_price_changes(store, days=30)}
 
+    sparklines = _get_sparklines_batch(store, [r["symbol"] for r in rows])
     stocks = []
     for r in rows:
         symbol = r["symbol"]
         change_info = changes.get(symbol, {})
-        sparkline = _get_sparkline_data(store, symbol)
 
         stocks.append(BucketStock(
             symbol=symbol,
@@ -378,7 +414,7 @@ def get_near_52w_high(store: DataStore, limit: int = 15) -> Bucket:
             metric_label="% from 52W High",
             latest_price=r["latest_close"],
             change_pct=round(change_info.get("change_pct", 0), 2),
-            sparkline_data=sparkline,
+            sparkline_data=sparklines.get(symbol, []),
         ))
 
     return Bucket(
@@ -417,11 +453,11 @@ def get_near_52w_low(store: DataStore, limit: int = 15) -> Bucket:
 
     changes = {s["symbol"]: s for s in _get_price_changes(store, days=30)}
 
+    sparklines = _get_sparklines_batch(store, [r["symbol"] for r in rows])
     stocks = []
     for r in rows:
         symbol = r["symbol"]
         change_info = changes.get(symbol, {})
-        sparkline = _get_sparkline_data(store, symbol)
 
         stocks.append(BucketStock(
             symbol=symbol,
@@ -432,7 +468,7 @@ def get_near_52w_low(store: DataStore, limit: int = 15) -> Bucket:
             metric_label="% from 52W Low",
             latest_price=r["latest_close"],
             change_pct=round(change_info.get("change_pct", 0), 2),
-            sparkline_data=sparkline,
+            sparkline_data=sparklines.get(symbol, []),
         ))
 
     return Bucket(
@@ -460,11 +496,16 @@ def get_sector_outperformers(store: DataStore, top_per_sector: int = 3) -> Bucke
                 by_sector[s["sector"]].append(s)
 
     # Get top N from each sector
+    sector_symbols = []
+    for sector, sector_stocks in by_sector.items():
+        sector_stocks.sort(key=lambda x: x["outperformance"], reverse=True)
+        sector_symbols.extend([s["symbol"] for s in sector_stocks[:top_per_sector]])
+
+    sparklines = _get_sparklines_batch(store, sector_symbols)
     stocks = []
     for sector, sector_stocks in by_sector.items():
         sector_stocks.sort(key=lambda x: x["outperformance"], reverse=True)
         for s in sector_stocks[:top_per_sector]:
-            sparkline = _get_sparkline_data(store, s["symbol"])
             stocks.append(BucketStock(
                 symbol=s["symbol"],
                 company_name=s["company_name"],
@@ -474,7 +515,7 @@ def get_sector_outperformers(store: DataStore, top_per_sector: int = 3) -> Bucke
                 metric_label="vs Sector Avg",
                 latest_price=s["end_price"],
                 change_pct=round(s["change_pct"], 2),
-                sparkline_data=sparkline,
+                sparkline_data=sparklines.get(s["symbol"], []),
             ))
 
     # Sort by outperformance overall
@@ -489,7 +530,8 @@ def get_sector_outperformers(store: DataStore, top_per_sector: int = 3) -> Bucke
 
 
 def get_all_buckets(store: DataStore) -> list[Bucket]:
-    """Get all 8 discovery buckets."""
+    """Get all 8 discovery buckets. Uses cached price changes for efficiency."""
+    _clear_price_cache()  # Reset per-request cache
     return [
         get_momentum_leaders(store),
         get_beaten_down(store),

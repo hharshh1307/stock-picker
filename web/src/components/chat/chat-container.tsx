@@ -1,23 +1,65 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
+import { useSession } from "next-auth/react";
 import { api } from "@/lib/api";
 import type { ChatMessage, ChatStreamEvent, ChatSuggestion } from "@/lib/types";
 import { MessageBubble } from "./message-bubble";
 import { ChatInput } from "./chat-input";
 import { SuggestedQuestions } from "./suggested-questions";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Bot, Loader2 } from "lucide-react";
+import { Bot, Loader2, RefreshCw } from "lucide-react";
 
 interface ChatContainerProps {
   suggestions: ChatSuggestion[];
 }
 
 export function ChatContainer({ suggestions }: ChatContainerProps) {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>(() => {
+    if (typeof window !== "undefined") {
+      const saved = sessionStorage.getItem("stock_picker_chat");
+      if (saved) {
+        try {
+          return JSON.parse(saved);
+        } catch (e) {
+          console.error("Failed to parse saved chat", e);
+        }
+      }
+    }
+    return [];
+  });
   const [isLoading, setIsLoading] = useState(false);
   const [currentToolCall, setCurrentToolCall] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const { data: session } = useSession();
+
+  // Get or create conversation ID
+  const conversationIdRef = useRef<string>(
+    typeof window !== "undefined"
+      ? sessionStorage.getItem("stock_picker_conv_id") ||
+        (() => {
+          const id = crypto.randomUUID();
+          sessionStorage.setItem("stock_picker_conv_id", id);
+          return id;
+        })()
+      : "default"
+  );
+  const conversationId = conversationIdRef.current;
+
+  // Load chat history from backend on mount
+  useEffect(() => {
+    const userId = (session?.user as any)?.id;
+    if (userId && messages.length === 0) {
+      fetch(`${api.baseUrl}/api/auth/chat-history/${userId}/${conversationId}`)
+        .then(res => res.json())
+        .then(data => {
+          if (Array.isArray(data) && data.length > 0) {
+            setMessages(data.map(m => ({ role: m.role, content: m.content })));
+          }
+        })
+        .catch(console.error);
+    }
+  }, [session, conversationId]);
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -25,6 +67,32 @@ export function ChatContainer({ suggestions }: ChatContainerProps) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [messages, currentToolCall]);
+
+  // Persist messages
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      sessionStorage.setItem("stock_picker_chat", JSON.stringify(messages));
+    }
+  }, [messages]);
+
+  const handleClearChat = () => {
+    setMessages([]);
+    if (typeof window !== "undefined") {
+      sessionStorage.removeItem("stock_picker_chat");
+      sessionStorage.removeItem("stock_picker_conv_id");
+      
+      const userId = (session?.user as any)?.id;
+      if (userId) {
+        fetch(`${api.baseUrl}/api/auth/chat-history/${userId}/${conversationId}`, {
+          method: "DELETE"
+        }).catch(console.error);
+      }
+      
+      // Reset conversation ID on clear
+      conversationIdRef.current = crypto.randomUUID();
+      sessionStorage.setItem("stock_picker_conv_id", conversationIdRef.current);
+    }
+  };
 
   const handleSend = async (message: string) => {
     if (!message.trim() || isLoading) return;
@@ -46,8 +114,9 @@ export function ChatContainer({ suggestions }: ChatContainerProps) {
 
     try {
       let fullContent = "";
+      const userId = (session?.user as any)?.id;
 
-      for await (const event of api.chat.streamChat(message)) {
+      for await (const event of api.chat.streamChat(message, conversationId, userId)) {
         const typedEvent = event as ChatStreamEvent;
 
         if (typedEvent.type === "text" && typedEvent.content) {
@@ -112,6 +181,20 @@ export function ChatContainer({ suggestions }: ChatContainerProps) {
 
   return (
     <div className="flex flex-col h-[calc(100vh-4rem)]">
+      {/* Header Actions */}
+      {messages.length > 0 && (
+        <div className="flex justify-end px-4 pt-4 pb-0">
+          <button
+            onClick={handleClearChat}
+            className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-zinc-400 bg-zinc-800/50 hover:bg-zinc-800 hover:text-emerald-400 rounded-full transition-colors"
+            title="Start a new conversation"
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+            New Chat
+          </button>
+        </div>
+      )}
+
       {/* Messages */}
       <ScrollArea className="flex-1 p-4" ref={scrollRef}>
         {messages.length === 0 ? (

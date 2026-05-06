@@ -7,10 +7,16 @@ dist/
 build/
 .venv/
 
-# Data & logs
-# Note: stock_picker.db is tracked for deployment (see git lfs or direct commit)
-data/*.db-shm
-data/*.db-wal
+# Data & logs — DB lives on Railway volume, NOT in git
+data/stock_picker.db
+data/stock_picker.db-shm
+data/stock_picker.db-wal
+data/stock_embeddings.json
+data/ml_predictions.json
+data/ml_models/
+data/oot_metrics.json
+data/live_portfolio_structured.json
+stock_picker.db
 logs/*.log
 *.log
 
@@ -26,7 +32,7 @@ logs/*.log
 *.swo
 .DS_Store
 
-# Lock files (optional, can be large)
+# Lock files (large, reproducible)
 uv.lock
 
 # Secrets
@@ -39,5 +45,13 @@ web/node_modules/
 web/.next/
 web/.env.local
 
-# Test database
+# Test files
+test_gemini_*.py
 test.db
+
+# PDF uploads in portfolio
+web/src/app/portfolio/*.pdf
+web/src/app/portfolio/*_structured.json
+
+# Audit logs
+audit_logs/
