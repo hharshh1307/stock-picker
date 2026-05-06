@@ -3,9 +3,11 @@ import { MarketPulseCard } from "@/components/discovery/market-pulse";
 import { SectorGrid } from "@/components/discovery/sector-grid";
 import { BucketCarousel } from "@/components/discovery/bucket-carousel";
 import { MoversTable } from "@/components/discovery/movers-table";
+import { SearchBar } from "@/components/discovery/search-bar";
 
-export const dynamic = "force-dynamic";
-export const revalidate = 300; // Revalidate every 5 minutes
+// ISR: cache for 5 minutes. First request computes, subsequent are instant.
+// Use force-dynamic only if you need real-time data on every navigation.
+export const revalidate = 300;
 
 async function getDiscoveryData() {
   try {
@@ -27,7 +29,7 @@ async function getDiscoveryData() {
       movers: null,
       plans: [],
       error: "Failed to load data. Make sure the API server is running.",
-    };
+    }
   }
 }
 
@@ -50,10 +52,13 @@ export default async function DiscoveryPage() {
 
   return (
     <div className="p-8 space-y-8">
-      {/* Header */}
-      <div>
-        <h1 className="text-3xl font-bold">Discovery</h1>
-        <p className="text-zinc-400 mt-1">Explore trending assets tailored for your strategies</p>
+      {/* Header + Search */}
+      <div className="space-y-4">
+        <div>
+          <h1 className="text-3xl font-bold">Discovery</h1>
+          <p className="text-zinc-400 mt-1">Explore trending assets tailored for your strategies</p>
+        </div>
+        <SearchBar />
       </div>
 
       {plans && plans.length > 0 && (

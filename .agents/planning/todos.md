@@ -9,15 +9,19 @@
 
 ### 🔴 P0 — Critical Path
 
-- [ ] **Portfolio P&L calculation** — Show current value, unrealized gain/loss for each holding
-  - Owner: backend + frontend
-  - Needs: Latest price lookup for portfolio symbols, P&L math
-  - Files: `data_store.py` (new method), `api_routes/user.py`, frontend portfolio page
+- [x] **Groww field mapping fix** — `average_price`, `trading_symbol`, `"holdings"` key *(done 2026-04-29)*
+- [x] **Groww timeout** — `timeout=10` on all calls *(done 2026-04-29)*
+- [x] **Groww margin fetch** — `get_available_margin_details()` now exposes buying power *(done 2026-04-29)*
+- [x] **Groww user profile** — `get_user_profile()` returns segments, DDPI status *(done 2026-04-29)*
+- [x] **TOTP auth flow** — implemented; activate by adding `GROWW_TOTP_SECRET` to `.env`
+- [ ] **Add `GROWW_TOTP_SECRET` to `.env`** — currently TOTP flow is dormant (optional)
+- [x] **Portfolio P&L with current prices** — `/api/user/portfolio/pnl` endpoint + frontend upgrade *(done 2026-04-29)*
+- [x] **Data freshness / daily price pipeline** — `price_scheduler.py` + APScheduler *(done 2026-04-29)*
+  - Runs daily at **16:00 IST** (Mon–Fri) automatically when server is up
+  - On server startup: checks staleness, triggers immediate background refresh if stale
+  - Incremental only (fast, ~2–3 min for 500 stocks)
 
-- [ ] **Data freshness indicators** — Show when data was last refreshed
-  - Owner: data-engineer + frontend
-  - Needs: Query MAX(date) from prices, MAX(fetched_at) from financials/news
-  - Files: `data_store.py`, new API endpoint, frontend badges
+
 
 - [ ] **Automated pipeline scheduling** — Run price refresh automatically
   - Owner: data-engineer + backend

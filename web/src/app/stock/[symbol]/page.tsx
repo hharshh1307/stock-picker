@@ -2,7 +2,7 @@ import { api, formatINR, formatCrores, formatPercent, formatVolume } from "@/lib
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ChangeBadge } from "@/components/shared/change-badge";
-import { Sparkline } from "@/components/shared/sparkline";
+import { PriceChart } from "@/components/stock/price-chart";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ArrowLeft, TrendingUp, TrendingDown, BarChart3, Newspaper } from "lucide-react";
 import Link from "next/link";
@@ -20,16 +20,20 @@ async function getStockData(symbol: string) {
       api.stocks.getFinancials(symbol),
       api.stocks.getNews(symbol, 10),
     ]);
-    return { detail, financials, news, error: null };
+    return { detail, financials, news, error: null, closest: [] };
   } catch (error) {
     console.error("Failed to fetch stock data:", error);
-    return { detail: null, financials: null, news: null, error: "Failed to load stock data" };
+    let closest = [];
+    try {
+      closest = await api.stocks.search(symbol, 3);
+    } catch (e) {}
+    return { detail: null, financials: null, news: null, error: "Failed to load stock data", closest };
   }
 }
 
 export default async function StockPage({ params }: StockPageProps) {
   const { symbol } = await params;
-  const { detail, financials, news, error } = await getStockData(symbol.toUpperCase());
+  const { detail, financials, news, error, closest } = await getStockData(symbol.toUpperCase());
 
   if (error || !detail) {
     return (
@@ -37,9 +41,32 @@ export default async function StockPage({ params }: StockPageProps) {
         <Link href="/" className="flex items-center gap-2 text-zinc-400 hover:text-zinc-100 mb-6">
           <ArrowLeft className="h-4 w-4" /> Back to Discovery
         </Link>
-        <div className="rounded-lg bg-red-900/20 border border-red-800 p-6 text-center">
-          <h2 className="text-xl font-semibold text-red-400">Stock Not Found</h2>
-          <p className="mt-2 text-zinc-400">{error || `Could not find data for ${symbol}`}</p>
+        <div className="rounded-xl bg-zinc-900 border border-zinc-800 p-8 text-center max-w-lg mx-auto">
+          <h2 className="text-xl font-semibold text-zinc-100">Stock Not Found</h2>
+          <p className="mt-2 text-zinc-400">We couldn't find an exact match for "{symbol}".</p>
+          
+          {closest && closest.length > 0 && (
+            <div className="mt-8 text-left">
+              <h3 className="text-xs font-medium text-zinc-500 mb-3 uppercase tracking-wider">Did you mean?</h3>
+              <div className="space-y-2">
+                {closest.map((stock: any) => (
+                  <Link 
+                    key={stock.symbol} 
+                    href={`/stock/${stock.symbol}`}
+                    className="flex items-center justify-between p-3 rounded-lg bg-zinc-800/50 hover:bg-zinc-800 border border-zinc-800 hover:border-emerald-500/50 transition-all group"
+                  >
+                    <div>
+                      <div className="font-medium text-emerald-400 group-hover:text-emerald-300">{stock.symbol}</div>
+                      <div className="text-sm text-zinc-400 truncate max-w-[250px]">{stock.company_name}</div>
+                    </div>
+                    <div className="text-xs text-zinc-500 bg-zinc-900 px-2 py-1 rounded">
+                      {stock.sector || "Unknown"}
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -77,10 +104,10 @@ export default async function StockPage({ params }: StockPageProps) {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <Card className="lg:col-span-2 bg-zinc-900/50 border-zinc-800">
           <CardHeader>
-            <CardTitle className="text-lg">30-Day Price Chart</CardTitle>
+            <CardTitle className="text-lg">Price History</CardTitle>
           </CardHeader>
           <CardContent>
-            <Sparkline data={detail.sparkline_data} height={200} />
+            <PriceChart symbol={detail.symbol} />
           </CardContent>
         </Card>
 

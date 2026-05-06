@@ -128,6 +128,16 @@ def cmd_all(store: DataStore, args: argparse.Namespace) -> None:
     args.max_stocks = 100  # Limit GNews to top 100 for full pipeline
     cmd_news(store, args)
 
+    try:
+        from ml_pipeline import train_models
+        logger.info("Triggering ML Pipeline to retrain predictive models and generate scores...")
+        train_models()
+        logger.info("ML Pipeline completed successfully.")
+    except Exception as e:
+        logger.error(f"ML Pipeline failed: {e}")
+        
+    logger.info("Full background update pipeline completed successfully")
+
     print(f"\n=== Pipeline Complete (duration: {datetime.now() - started}) ===")
     cmd_status(store, args)
 
@@ -187,7 +197,7 @@ def main() -> None:
 
     # chat (CLI chat interface)
     p_chat = sub.add_parser("chat", help="Start interactive AI chat session")
-    p_chat.add_argument("--model", default="gpt-4o", help="OpenAI model to use (default: gpt-4o)")
+    p_chat.add_argument("--model", default="gemini-2.5-flash", help="Model to use (default: gemini-2.5-flash)")
 
     args = parser.parse_args()
 

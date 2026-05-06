@@ -11,8 +11,13 @@ anyio==4.12.1
     #   sse-starlette
     #   starlette
     #   watchfiles
+apscheduler==3.11.2
+    # via stock-picker (pyproject.toml)
+bcrypt==5.0.0
+    # via stock-picker (pyproject.toml)
 beautifulsoup4==4.14.3
     # via
+    #   stock-picker (pyproject.toml)
     #   gnews
     #   yfinance
 certifi==2026.1.4
@@ -66,10 +71,16 @@ idna==3.11
     #   requests
 jiter==0.13.0
     # via openai
+joblib==1.5.3
+    # via
+    #   stock-picker (pyproject.toml)
+    #   scikit-learn
 korean-lunar-calendar==0.3.1
     # via exchange-calendars
 lxml==6.0.2
-    # via duckduckgo-search
+    # via
+    #   stock-picker (pyproject.toml)
+    #   duckduckgo-search
 multitasking==0.0.12
     # via yfinance
 niftystocks==0.1.2
@@ -78,8 +89,10 @@ nselib==2.4.2
     # via stock-picker (pyproject.toml)
 numpy==2.4.2
     # via
+    #   stock-picker (pyproject.toml)
     #   exchange-calendars
     #   pandas
+    #   scikit-learn
     #   scipy
     #   yfinance
 openai==2.17.0
@@ -132,8 +145,12 @@ requests==2.32.5
     #   nselib
     #   tiktoken
     #   yfinance
+scikit-learn==1.8.0
+    # via stock-picker (pyproject.toml)
 scipy==1.17.0
-    # via nselib
+    # via
+    #   nselib
+    #   scikit-learn
 sgmllib3k==1.0.0
     # via feedparser
 six==1.17.0
@@ -148,6 +165,8 @@ starlette==0.52.1
     # via
     #   fastapi
     #   sse-starlette
+threadpoolctl==3.6.0
+    # via scikit-learn
 tiktoken==0.12.0
     # via stock-picker (pyproject.toml)
 toolz==1.1.0
@@ -170,6 +189,8 @@ typing-inspection==0.4.2
     #   pydantic
 tzdata==2025.3
     # via exchange-calendars
+tzlocal==5.3.1
+    # via apscheduler
 urllib3==2.6.3
     # via requests
 uvicorn==0.40.0

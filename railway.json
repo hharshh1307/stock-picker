@@ -4,8 +4,9 @@
     "builder": "NIXPACKS"
   },
   "deploy": {
-    "startCommand": "python -m uvicorn api_server:app --host 0.0.0.0 --port $PORT",
-    "healthcheckPath": "/api/discovery/market-pulse",
-    "restartPolicyType": "ON_FAILURE"
+    "startCommand": "pip install -r requirements.txt && python -m uvicorn api_server:app --host 0.0.0.0 --port $PORT",
+    "healthcheckPath": "/health",
+    "restartPolicyType": "ON_FAILURE",
+    "restartPolicyMaxRetries": 10
   }
 }

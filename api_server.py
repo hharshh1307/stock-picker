@@ -22,10 +22,19 @@ def get_store() -> DataStore:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Manage DataStore lifecycle."""
+    """Manage DataStore lifecycle and background price scheduler."""
     global store
     store = DataStore(db_path=str(DB_PATH))
+
+    # Start the daily price freshness scheduler
+    from price_scheduler import start_scheduler
+    scheduler = start_scheduler(store)
+
     yield
+
+    # Shutdown
+    if scheduler and scheduler.running:
+        scheduler.shutdown(wait=False)
     if store:
         store.close()
         store = None
@@ -87,12 +96,15 @@ async def health() -> dict[str, str]:
 
 
 # Import and include routers
-from api_routes import discovery, stocks, chat, user
+from api_routes import discovery, stocks, chat, user, signals, admin, auth
 
 app.include_router(discovery.router, prefix="/api/discovery", tags=["discovery"])
 app.include_router(stocks.router, prefix="/api/stocks", tags=["stocks"])
 app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
 app.include_router(user.router, prefix="/api/user", tags=["user"])
+app.include_router(signals.router, prefix="/api/signals", tags=["signals"])
+app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
+app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 
 
 def run_server(host: str = "0.0.0.0", port: int | None = None, reload: bool = False):

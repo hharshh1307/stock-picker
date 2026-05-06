@@ -26,7 +26,7 @@ def print_colored(text: str, color: str = "default") -> None:
     print(f"{colors.get(color, '')}{text}{reset}")
 
 
-def run_chat(model: str = "gpt-4o", db_path: str | None = None) -> None:
+def run_chat(model: str = "gemini-2.5-flash", db_path: str | None = None) -> None:
     """Run the interactive chat session."""
     print_colored("\n" + "=" * 60, "cyan")
     print_colored("  NIFTY SAGE - AI Stock Market Analyst", "bold")
@@ -40,10 +40,10 @@ def run_chat(model: str = "gpt-4o", db_path: str | None = None) -> None:
     from dotenv import load_dotenv
     load_dotenv()
 
-    if not os.getenv("OPENAI_API_KEY"):
-        print_colored("Error: OPENAI_API_KEY not found in environment.", "red")
-        print_colored("Please create a .env file with your OpenAI API key:", "yellow")
-        print_colored("  echo 'OPENAI_API_KEY=sk-...' > .env", "default")
+    if not os.getenv("GEMINI_API_KEY"):
+        print_colored("Error: GEMINI_API_KEY not found in environment.", "red")
+        print_colored("Please create a .env file with your GEMINI_API_KEY:", "yellow")
+        print_colored("  echo 'GEMINI_API_KEY=AIzaSy...' > .env", "default")
         store.close()
         return
 
@@ -119,7 +119,7 @@ def run_chat(model: str = "gpt-4o", db_path: str | None = None) -> None:
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Nifty Sage CLI Chat")
-    parser.add_argument("--model", default="gpt-4o", help="OpenAI model to use")
+    parser.add_argument("--model", default="gemini-2.5-flash", help="Model to use")
     parser.add_argument("--db", help="Path to SQLite database")
     args = parser.parse_args()
 

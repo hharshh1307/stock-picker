@@ -13,36 +13,30 @@ logger = setup_logger(__name__, "fetch_nifty500_list.log")
 
 
 def get_nifty500_symbols() -> list[str]:
-    """Fetch Nifty 500 constituent symbols using niftystocks package."""
-    try:
-        from niftystocks import ns
-        symbols = ns.get_nifty500()
-        if symbols and len(symbols) > 400:
-            logger.info(f"Got {len(symbols)} symbols from niftystocks")
-            return symbols
-    except Exception as e:
-        logger.warning(f"niftystocks failed: {e}")
-
-    # Fallback: try nselib
+    """Fetch ALL active NSE listed equities (thousands of stocks)."""
     try:
         from nselib import capital_market
-        df = capital_market.market_watch_all_indices()
-        # nselib may not directly give Nifty 500 constituents in a clean way;
-        # try the index constituents endpoint
-        logger.warning("Falling back to nselib for Nifty 500 list")
-        # This is less reliable, but worth a try
-        from nselib.indices import constituent_stock_list
-        result = constituent_stock_list(
-            index_category="BroadMarketIndices", index_name="Nifty 500"
-        )
-        if hasattr(result, "Symbol"):
-            syms = result["Symbol"].tolist()
-            logger.info(f"Got {len(syms)} symbols from nselib")
+        df = capital_market.equity_list()
+        
+        # Filter out ETFs and non-equities if possible, typically 'SERIES' == 'EQ'
+        if 'SERIES' in df.columns:
+            df = df[df['SERIES'] == 'EQ']
+            
+        if 'SYMBOL' in df.columns:
+            syms = df['SYMBOL'].tolist()
+            logger.info(f"Got {len(syms)} symbols from nselib active equity list")
             return syms
     except Exception as e:
-        logger.warning(f"nselib fallback also failed: {e}")
+        logger.warning(f"Failed to fetch active equities from nselib: {e}")
 
-    raise RuntimeError("Could not fetch Nifty 500 constituent list from any source")
+    # Fallback to nifty 500
+    try:
+        from niftystocks import ns
+        return ns.get_nifty500()
+    except:
+        pass
+
+    raise RuntimeError("Could not fetch equity list from any source")
 
 
 def enrich_stock_info(
@@ -92,15 +86,15 @@ def enrich_stock_info(
 
 
 def run(store: DataStore, skip_enrichment: bool = False) -> dict:
-    """Fetch Nifty 500 list and store it.
+    """Fetch entire NSE active equities list and store it.
 
     Returns summary dict with counts.
     """
     started = datetime.now()
-    logger.info("Fetching Nifty 500 constituent list...")
+    logger.info("Fetching complete active NSE equity list...")
 
     symbols = get_nifty500_symbols()
-    logger.info(f"Found {len(symbols)} Nifty 500 constituents")
+    logger.info(f"Found {len(symbols)} active equities")
 
     if skip_enrichment:
         stocks = [

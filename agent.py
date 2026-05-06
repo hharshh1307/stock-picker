@@ -10,7 +10,9 @@ from openai import OpenAI
 
 from agent_prompts import build_system_prompt, FALLBACK_MESSAGE
 from agent_tools import TOOL_SCHEMAS, execute_tool
+from audit_logger import ChatAuditLogger
 from data_store import DataStore
+from intent_classifier import classify_intent, get_flow_system_addition
 from utils import setup_logger
 
 load_dotenv()
@@ -27,19 +29,27 @@ class FinancialExpertAgent:
     def __init__(
         self,
         store: DataStore,
-        model: str = "gpt-4o",
+        model: str = "gemini-2.5-flash",
         temperature: float = 0.3,
+        user_id: str | None = None,
+        session_id: str | None = None,
     ):
         self.store = store
         self.model = model
         self.temperature = temperature
-        self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
-        self.update_system_prompt()
+        self.user_id = user_id
+        self.session_id = session_id
+        self.client = OpenAI(
+            api_key=os.getenv("GEMINI_API_KEY"),
+            base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
+        )
 
         # Conversation history
         self.messages: list[dict] = []
         self._token_count = 0
+
+        self.update_system_prompt()
+        self._load_history()
 
     def update_system_prompt(self) -> None:
         """Update the system prompt with fresh data from the store."""
@@ -64,6 +74,43 @@ class FinancialExpertAgent:
         # Update the system message if it already exists in the conversation history
         if self.messages and self.messages[0].get("role") == "system":
             self.messages[0]["content"] = self.system_prompt
+
+    def _load_history(self) -> None:
+        """Load recent chat history from the database."""
+        if not self.user_id or not self.session_id:
+            return
+        
+        rows = self.store.conn.execute(
+            """SELECT role, content FROM user_chat_history
+               WHERE user_id = ? AND session_id = ?
+               ORDER BY created_at ASC
+               LIMIT 20""",
+            (self.user_id, self.session_id),
+        ).fetchall()
+        
+        if rows:
+            # Insert system prompt as first message if we're loading history
+            self.messages.append({"role": "system", "content": self.system_prompt})
+            for r in rows:
+                if r["content"]:  # Only load messages with actual content
+                    self.messages.append({"role": r["role"], "content": r["content"]})
+            logger.info(f"Loaded {len(rows)} messages from history for session {self.session_id}")
+
+    def _save_message(self, role: str, content: str) -> None:
+        """Save a message to the database."""
+        if not self.user_id or not self.session_id or not content:
+            return
+            
+        from datetime import datetime
+        try:
+            self.store.conn.execute(
+                """INSERT INTO user_chat_history (user_id, session_id, role, content, created_at)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (self.user_id, self.session_id, role, content, datetime.now().isoformat())
+            )
+            self.store.conn.commit()
+        except Exception as e:
+            logger.error(f"Failed to save message to history: {e}")
 
     def _estimate_tokens(self, text: str) -> int:
         """Rough token estimate (4 chars per token on average)."""
@@ -114,17 +161,34 @@ class FinancialExpertAgent:
         self, user_message: str, conversation_id: str | None = None
     ) -> Generator[dict, None, None]:
         """Stream response chunks synchronously."""
+        audit = ChatAuditLogger(session_id=conversation_id)
+        audit.start_query(user_message)
+
         # Always inject the latest portfolio and context before starting
         self.update_system_prompt()
 
-        # Check if we need to summarize
+        # ── Intent classification ─────────────────────────────────────────
+        intent, confidence = classify_intent(user_message, self.client)
+        flow_addition = get_flow_system_addition(intent)
+        logger.info(f"Intent: {intent} (confidence={confidence:.2f})")
+        yield {"type": "metadata", "intent": intent, "confidence": confidence}
+
+        # ── Check if we need to summarize ─────────────────────────────────
         if self._should_summarize():
             self._summarize_history()
 
-        # Add user message
+        # Add user message with flow-specific system injection
         if not self.messages:
             self.messages.append({"role": "system", "content": self.system_prompt})
+        
+        # Temporarily augment system prompt with flow instructions
+        if self.messages and self.messages[0].get("role") == "system" and flow_addition:
+            original_system = self.messages[0]["content"]
+            self.messages[0]["content"] = original_system + "\n" + flow_addition
+        
         self.messages.append({"role": "user", "content": user_message})
+        self._save_message("user", user_message)
+
 
         max_iterations = 10  # Prevent infinite loops
         iteration = 0
@@ -215,6 +279,8 @@ class FinancialExpertAgent:
 
                         # Execute the tool
                         result = execute_tool(self.store, tool_name, args)
+                        
+                        audit.log_tool_execution(tool_name, args, result)
 
                         yield {
                             "type": "tool_result",
@@ -239,6 +305,8 @@ class FinancialExpertAgent:
                             "role": "assistant",
                             "content": full_content
                         })
+                        self._save_message("assistant", full_content)
+                        audit.log_final_response(full_content)
                     break
 
             except Exception as e:
@@ -262,7 +330,7 @@ class FinancialExpertAgent:
 _agent_instance: FinancialExpertAgent | None = None
 
 
-def get_agent(store: DataStore, model: str = "gpt-4o") -> FinancialExpertAgent:
+def get_agent(store: DataStore, model: str = "gemini-2.5-flash") -> FinancialExpertAgent:
     """Get or create the agent instance."""
     global _agent_instance
     if _agent_instance is None:

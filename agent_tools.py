@@ -1,4 +1,4 @@
-"""Agent tools — 13 tools for the Financial Expert Agent.
+"""Agent tools — 16 tools for the Financial Expert Agent.
 
 Each tool has:
 1. A function implementation that queries the local database
@@ -17,7 +17,12 @@ from market_intelligence import (
     get_top_movers,
     get_volume_spikes,
 )
-
+from alternative_assets import (
+    fetch_real_macro_environment,
+    fetch_crypto_prices,
+    search_mutual_fund,
+    fetch_mutual_fund_nav
+)
 
 # --- Tool Implementations ---
 
@@ -44,7 +49,7 @@ def search_stocks(store: DataStore, query: str, sector: str | None = None) -> li
 
 
 def get_stock_info(store: DataStore, symbol: str) -> dict | None:
-    """Get comprehensive stock profile with latest price and 52-week range."""
+    """Get comprehensive stock profile with latest price, 52-week range, and ML signals."""
     detail = store.get_stock_detail(symbol.upper())
     if not detail:
         return None
@@ -61,6 +66,23 @@ def get_stock_info(store: DataStore, symbol: str) -> dict | None:
         change_30d = ((detail["latest_price"] - row["close"]) / row["close"]) * 100
 
     detail["change_30d"] = round(change_30d, 2) if change_30d else None
+
+    # Inject ML signals from saved predictions
+    try:
+        from ml_pipeline import get_ml_predictions
+        preds = get_ml_predictions()
+        ml = preds.get(symbol.upper())
+        if ml:
+            detail["ml_signals"] = {
+                "score_1m": ml.get("ml_1m_score"),
+                "predicted_return_1m_pct": ml.get("predicted_return_1m"),
+                "outperform_probability": ml.get("outperform_probability"),
+                "is_likely_outperformer": ml.get("is_likely_outperformer"),
+                "generated_at": ml.get("generated_at"),
+            }
+    except Exception:
+        pass  # ML predictions optional — never block stock info
+
     return detail
 
 
@@ -437,6 +459,194 @@ def get_investment_plans(store: DataStore) -> list[dict]:
         for plan in plans
     ]
 
+def get_portfolio_analysis(store: DataStore) -> dict:
+    """Get detailed portfolio P&L with ML signals for each holding."""
+    from groww_integration import fetch_live_groww_portfolio, save_live_portfolio_to_cache
+    from portfolio_analyzer import get_portfolio_pnl
+
+    # Load ML predictions once
+    try:
+        from ml_pipeline import get_ml_predictions
+        ml_preds = get_ml_predictions()
+    except Exception:
+        ml_preds = {}
+
+    def _inject_ml(holding: dict) -> dict:
+        sym = (holding.get("asset_name") or holding.get("symbol", "")).upper()
+        ml = ml_preds.get(sym)
+        if ml:
+            holding["ml_signals"] = {
+                "score_1m": ml.get("ml_1m_score"),
+                "predicted_return_1m_pct": ml.get("predicted_return_1m"),
+                "outperform_probability": ml.get("outperform_probability"),
+                "is_likely_outperformer": ml.get("is_likely_outperformer"),
+            }
+        return holding
+
+    # Transparent background sync
+    live_result = fetch_live_groww_portfolio()
+    if live_result.get("status") == "success":
+        save_live_portfolio_to_cache(live_result["structured_portfolio"])
+        result = {
+            "source": "Groww Live Broker Connection",
+            "holdings": [_inject_ml(h) for h in live_result["structured_portfolio"]],
+        }
+        if live_result.get("available_cash"):
+            result["available_cash_inr"] = live_result["available_cash"]
+        if live_result.get("user_profile"):
+            prof = live_result["user_profile"]
+            result["account_info"] = {
+                "ucc": prof.get("ucc"),
+                "active_segments": prof.get("active_segments", []),
+                "ddpi_enabled": prof.get("ddpi_enabled"),
+                "nse_enabled": prof.get("nse_enabled"),
+                "bse_enabled": prof.get("bse_enabled"),
+            }
+        if live_result.get("intraday_positions"):
+            result["intraday_positions"] = live_result["intraday_positions"]
+        return result
+
+    # Fallback to uploaded PDF
+    pdf_result = get_uploaded_portfolio_pdf(store)
+    if pdf_result.get("status") == "success":
+        holdings = [_inject_ml(h) for h in pdf_result.get("structured_portfolio", [])]
+        return {
+            "source": f"Uploaded PDF Statement ({pdf_result.get('filename', 'cache')})",
+            "holdings": holdings,
+        }
+
+    # Final fallback to local DB
+    return get_portfolio_pnl(store)
+
+
+def get_groww_position_for_symbol(store: DataStore, symbol: str) -> dict:
+    """Fetch the current live position for a specific stock from Groww (CASH segment)."""
+    from groww_integration import fetch_position_for_symbol
+    return fetch_position_for_symbol(symbol)
+
+def get_uploaded_portfolio_pdf(store: DataStore) -> dict:
+    """Read and extract raw text from any uploaded PDF Demat portfolio statements.
+    Use this to see the user's complete portfolio, including Mutual Funds, ETFs, and unlisted stocks.
+    """
+    import os
+    import json
+    import pdfplumber
+    from pathlib import Path
+    from openai import OpenAI
+    
+    portfolio_dir = Path("web/src/app/portfolio")
+    if not portfolio_dir.exists():
+        return {"error": "Portfolio directory not found.", "structured_portfolio": []}
+        
+    pdf_files = list(portfolio_dir.glob("*.pdf"))
+    if not pdf_files:
+        return {"error": "No PDF portfolio statements found.", "structured_portfolio": []}
+        
+    latest_pdf = max(pdf_files, key=os.path.getmtime)
+    cache_file = portfolio_dir / f"{latest_pdf.stem}_structured.json"
+    
+    # Return cached structured data if it exists
+    if cache_file.exists() and os.path.getmtime(cache_file) > os.path.getmtime(latest_pdf):
+        with open(cache_file, "r") as f:
+            return {"status": "success", "source": "cache", "structured_portfolio": json.load(f)}
+    
+    try:
+        text = []
+        with pdfplumber.open(latest_pdf) as pdf:
+            for page in pdf.pages:
+                extracted = page.extract_text()
+                if extracted:
+                    text.append(extracted)
+        raw_text = "\n".join(text)
+        
+        client = OpenAI(
+            api_key=os.getenv("GEMINI_API_KEY"),
+            base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
+        )
+        response = client.chat.completions.create(
+            model="gemini-2.5-flash",
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": "You are a financial data parser. Extract the user's portfolio from the raw Demat statement text into a JSON array named 'portfolio' with objects containing: 'asset_name', 'asset_type' (Equity/Mutual Fund/ETF), 'quantity' (number), 'rate' (number), 'total_value' (number)."},
+                {"role": "user", "content": raw_text}
+            ]
+        )
+        
+        raw = response.choices[0].message.content.strip()
+        import re
+        json_match = re.search(r'\{.*\}', raw, re.DOTALL)
+        if json_match: raw = json_match.group(0)
+        structured_data = json.loads(raw).get("portfolio", [])
+        
+        with open(cache_file, "w") as f:
+            json.dump(structured_data, f, indent=2)
+            
+        return {"status": "success", "source": "parsed_pdf", "structured_portfolio": structured_data}
+    except Exception as e:
+        return {"error": f"Failed to parse PDF: {str(e)}", "structured_portfolio": []}
+
+def get_live_broker_portfolio(store: DataStore) -> dict:
+    """Fetch the real-time live portfolio directly from the connected Groww broker account."""
+    from groww_integration import fetch_live_groww_portfolio, save_live_portfolio_to_cache
+    
+    result = fetch_live_groww_portfolio()
+    if result.get("status") == "success":
+        save_live_portfolio_to_cache(result["structured_portfolio"])
+    
+    return result
+
+def get_portfolio_risk(store: DataStore) -> dict:
+    """Get portfolio risk analysis: concentration, sectors, diversification."""
+    from portfolio_analyzer import get_portfolio_risk_analysis
+    return get_portfolio_risk_analysis(store)
+
+def run_strategy_simulation(store: DataStore, frequency: str, iterations: int = 10) -> dict:
+    """Run a historical backtest simulation for a specific frequency strategy."""
+    from backtester import run_simulation
+    return run_simulation(frequency, iterations)
+
+def get_strategy_recommendation(store: DataStore, frequency: str, amount: float | None = None) -> dict:
+    """Get investment recommendations for a specific frequency."""
+    from portfolio_analyzer import get_strategy_recommendations
+    # If amount not provided, look up from plans
+    if amount is None:
+        plans = store.get_investment_plans()
+        for p in plans:
+            if p.frequency.lower() == frequency.lower():
+                amount = p.allocated_amount
+                break
+        if amount is None:
+            amount = 1000  # default
+    return get_strategy_recommendations(store, frequency, amount)
+
+
+def get_macro_environment(store: DataStore) -> dict:
+    """Get real-time macroeconomic indicators (VIX, USDINR, Gold, Crude)."""
+    return fetch_real_macro_environment()
+
+def get_crypto_market(store: DataStore) -> dict:
+    """Get top cryptocurrency prices."""
+    return fetch_crypto_prices()
+
+def search_mutual_funds(store: DataStore, query: str) -> list[dict]:
+    """Search for mutual funds and get their latest NAV."""
+    results = search_mutual_fund(query)
+    # Automatically try to fetch NAV for the top result to give immediate value
+    if results and "error" not in results[0] and results[0].get("schemeCode"):
+        top_fund_data = fetch_mutual_fund_nav(str(results[0]["schemeCode"]))
+        results[0]["nav_details"] = top_fund_data
+    return results
+
+def get_screener_data_tool(store: DataStore, symbol: str) -> dict:
+    """Fetch rich fundamental data from Screener.in: PE, PB, ROE, ROCE, promoter holding, quarterly P&L, peer comparison."""
+    from screener_scraper import get_screener_data, format_screener_for_agent
+    data = get_screener_data(symbol.upper(), store)
+    return {
+        "raw": data,
+        "formatted": format_screener_for_agent(data),
+    }
+
+
 # --- OpenAI Function Schemas ---
 
 TOOL_SCHEMAS = [
@@ -718,7 +928,182 @@ TOOL_SCHEMAS = [
                 "required": []
             }
         }
-    }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_portfolio_analysis",
+            "description": "Get detailed portfolio P&L analysis with current market prices, unrealized gains/losses per holding, and overall portfolio performance.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_uploaded_portfolio_pdf",
+            "description": "Extract raw text from uploaded Demat portfolio PDFs to analyze Mutual Funds, ETFs, and non-Nifty500 holdings.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_live_broker_portfolio",
+            "description": "Fetch the real-time live portfolio holdings, available cash balance, and account info directly from the connected Groww broker API.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_groww_position_for_symbol",
+            "description": "Fetch the current live position for a specific stock from Groww (CASH segment). Use this when the user asks about a single holding's current position, realised P&L, or quantity.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "symbol": {
+                        "type": "string",
+                        "description": "NSE trading symbol (e.g., 'RELIANCE', 'TCS')"
+                    }
+                },
+                "required": ["symbol"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_portfolio_risk",
+            "description": "Analyze portfolio risk: sector allocation, concentration (HHI), diversification score, frequency strategy breakdown, volatility per holding, and actionable diversification suggestions.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_strategy_recommendation",
+            "description": "Get investment recommendations for a specific frequency (Daily/Weekly/Monthly/Yearly). Scores stocks using technicals+fundamentals appropriate for the time horizon, provides market timing signal, and suggests specific stock allocations with reasoning.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "frequency": {
+                        "type": "string",
+                        "description": "Investment frequency: 'Daily', 'Weekly', 'Monthly', 'Yearly', or 'Long-term'",
+                        "enum": ["Daily", "Weekly", "Monthly", "Yearly", "Long-term"]
+                    },
+                    "amount": {
+                        "type": "number",
+                        "description": "Optional: budget amount in INR. If not provided, uses the amount from the user's investment plan for that frequency."
+                    }
+                },
+                "required": ["frequency"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "run_strategy_simulation",
+            "description": "Run a historical backtest simulation to calculate the expected financial gain, win rate, and max drawdown of a strategy over a specific frequency.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "frequency": {
+                        "type": "string",
+                        "description": "Investment frequency to backtest (Daily, Weekly, Monthly, Yearly)",
+                        "enum": ["Daily", "Weekly", "Monthly", "Yearly"]
+                    },
+                    "iterations": {
+                        "type": "integer",
+                        "description": "Number of past iterations to simulate (default is 10)"
+                    }
+                },
+                "required": ["frequency"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_macro_environment",
+            "description": "Get broader macroeconomic indicators (Nifty VIX, USDINR, Gold, Crude Oil) to assess overall market risk, cross-asset correlations, and suitability for Futures & Options (F&O) trading.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_crypto_market",
+            "description": "Get real-time prices for major cryptocurrencies (Bitcoin, Ethereum, Solana, Ripple) in INR and USD using the CoinGecko API. Useful for assessing global risk appetite.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_mutual_funds",
+            "description": "Search for Indian Mutual Funds and fetch their latest NAV and daily change percentage using mfapi.in. Use this to track passive investments or provide diversification options.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The name or part of the name of the mutual fund (e.g., 'SBI Small Cap', 'Parag Parikh Flexi')."
+                    }
+                },
+                "required": ["query"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_screener_data",
+            "description": (
+                "Fetch rich fundamental data from Screener.in for a stock. "
+                "Returns: PE ratio, PB ratio, ROE, ROCE (3yr), Market Cap, Book Value, Dividend Yield, "
+                "Promoter/FII/DII/Public shareholding %, Screener's own pros & cons analysis, "
+                "quarterly P&L (last 8 quarters: Sales, Net Profit, OPM%), annual P&L trend (5 years), "
+                "balance sheet highlights, cash flow, and peer comparison table. "
+                "Use this for any deep fundamental analysis, comparison, or when user asks about valuation, "
+                "ownership, or financial quality. Always prefer this over get_financials for fundamentals."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "symbol": {
+                        "type": "string",
+                        "description": "NSE stock symbol (e.g., 'RELIANCE', 'HDFCBANK', 'INFY')"
+                    }
+                },
+                "required": ["symbol"]
+            }
+        }
+    },
 ]
 
 
@@ -740,6 +1125,17 @@ def execute_tool(store: DataStore, tool_name: str, arguments: dict[str, Any]) ->
         "web_search": lambda args: web_search(args["query"], args.get("max_results", 10)),
         "get_user_portfolio": lambda args: get_user_portfolio(store),
         "get_investment_plans": lambda args: get_investment_plans(store),
+        "get_portfolio_analysis": lambda args: get_portfolio_analysis(store),
+        "get_uploaded_portfolio_pdf": lambda args: get_uploaded_portfolio_pdf(store),
+        "get_live_broker_portfolio": lambda args: get_live_broker_portfolio(store),
+        "get_groww_position_for_symbol": lambda args: get_groww_position_for_symbol(store, args["symbol"]),
+        "get_portfolio_risk": lambda args: get_portfolio_risk(store),
+        "run_strategy_simulation": lambda args: run_strategy_simulation(store, args["frequency"], args.get("iterations", 10)),
+        "get_strategy_recommendation": lambda args: get_strategy_recommendation(store, args["frequency"], args.get("amount")),
+        "get_macro_environment": lambda args: get_macro_environment(store),
+        "get_crypto_market": lambda args: get_crypto_market(store),
+        "search_mutual_funds": lambda args: search_mutual_funds(store, args["query"]),
+        "get_screener_data": lambda args: get_screener_data_tool(store, args["symbol"]),
     }
 
     if tool_name not in tool_map:

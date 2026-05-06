@@ -79,6 +79,8 @@ export interface StockSearchResult {
   company_name: string;
   sector: string | null;
   industry: string | null;
+  latest_price: number | null;
+  change_1d_pct: number | null;
 }
 
 export interface PricePoint {
@@ -149,4 +151,48 @@ export interface PortfolioItem {
   average_buy_price: number;
   strategy_frequency?: string;
   added_at?: string;
+  is_live_synced?: boolean;
+}
+
+export interface PortfolioItemWithPnL {
+  symbol: string;
+  company_name: string;
+  sector: string | null;
+  quantity: number;
+  average_buy_price: number;
+  strategy_frequency: string;
+  // Price
+  latest_price: number | null;
+  price_date: string | null;
+  high_52w: number | null;
+  low_52w: number | null;
+  // P&L
+  invested_value: number;
+  current_value: number | null;
+  unrealized_pnl: number | null;
+  pnl_pct: number | null;
+  change_30d_pct: number | null;
+  // Groww extras
+  isin: string | null;
+  t1_quantity: number | null;
+  demat_free_quantity: number | null;
+  is_live_synced: boolean;
+}
+
+export interface PortfolioPnLResponse {
+  source: string;
+  account_info: {
+    ucc: string | null;
+    active_segments: string[];
+    ddpi_enabled: boolean | null;
+  } | null;
+  available_cash: number | null;
+  summary: {
+    holding_count: number;
+    total_invested: number;
+    total_current_value: number | null;
+    total_unrealized_pnl: number | null;
+    total_pnl_pct: number | null;
+  };
+  holdings: PortfolioItemWithPnL[];
 }
