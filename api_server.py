@@ -24,11 +24,24 @@ def get_store() -> DataStore:
 async def lifespan(app: FastAPI):
     """Manage DataStore lifecycle and background price scheduler."""
     global store
-    store = DataStore(db_path=str(DB_PATH))
+    import logging
+    logger = logging.getLogger(__name__)
 
-    # Start the daily price freshness scheduler
-    from price_scheduler import start_scheduler
-    scheduler = start_scheduler(store)
+    # Ensure data directory exists (Railway volume mount)
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    logger.info(f"Using database at: {DB_PATH}")
+
+    store = DataStore(db_path=str(DB_PATH))
+    logger.info("DataStore initialized successfully")
+
+    # Start the daily price freshness scheduler (non-fatal if it fails)
+    scheduler = None
+    try:
+        from price_scheduler import start_scheduler
+        scheduler = start_scheduler(store)
+        logger.info("Price scheduler started")
+    except Exception as e:
+        logger.warning(f"Price scheduler failed to start (non-fatal): {e}")
 
     yield
 
