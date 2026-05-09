@@ -21,5 +21,5 @@ RUN mkdir -p /data
 ENV PORT=8000
 EXPOSE ${PORT}
 
-# Use shell form so $PORT gets expanded at runtime
-CMD uvicorn api_server:app --host 0.0.0.0 --port $PORT
+# api_server.py already reads PORT from env via os.getenv("PORT", 8000)
+CMD ["python", "api_server.py"]
