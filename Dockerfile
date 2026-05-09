@@ -17,8 +17,9 @@ COPY . .
 # Create data directory (Railway volume mounts here)
 RUN mkdir -p /data
 
-# Expose port
-EXPOSE 8000
+# Railway uses $PORT env var (not always 8000)
+ENV PORT=8000
+EXPOSE ${PORT}
 
-# Start the server
-CMD ["python", "-m", "uvicorn", "api_server:app", "--host", "0.0.0.0", "--port", "8000"]
+# Use shell form so $PORT gets expanded at runtime
+CMD uvicorn api_server:app --host 0.0.0.0 --port $PORT
