@@ -23,7 +23,7 @@ async function getStockData(symbol: string) {
     return { detail, financials, news, error: null, closest: [] };
   } catch (error) {
     console.error("Failed to fetch stock data:", error);
-    let closest = [];
+    let closest: any[] = [];
     try {
       closest = await api.stocks.search(symbol, 3);
     } catch (e) {}
