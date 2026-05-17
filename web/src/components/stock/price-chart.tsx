@@ -95,7 +95,7 @@ export function PriceChart({ symbol }: { symbol: string }) {
                 contentStyle={{ backgroundColor: "#18181b", borderColor: "#27272a", borderRadius: "8px" }}
                 itemStyle={{ color: "#10b981" }}
                 labelStyle={{ color: "#a1a1aa", marginBottom: "4px" }}
-                formatter={(value: number) => [formatINR(value), "Price"]}
+                formatter={(value: number | undefined) => [formatINR(value ?? 0), "Price"]}
                 labelFormatter={(label) => new Date(label).toLocaleDateString()}
               />
               <Line
