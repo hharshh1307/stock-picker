@@ -50,7 +50,7 @@ export function ChatContainer({ suggestions }: ChatContainerProps) {
   useEffect(() => {
     const userId = (session?.user as any)?.id;
     if (userId && messages.length === 0) {
-      fetch(`${api.baseUrl}/api/auth/chat-history/${userId}/${conversationId}`)
+      fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/auth/chat-history/${userId}/${conversationId}`)
         .then(res => res.json())
         .then(data => {
           if (Array.isArray(data) && data.length > 0) {
@@ -83,7 +83,7 @@ export function ChatContainer({ suggestions }: ChatContainerProps) {
       
       const userId = (session?.user as any)?.id;
       if (userId) {
-        fetch(`${api.baseUrl}/api/auth/chat-history/${userId}/${conversationId}`, {
+        fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/auth/chat-history/${userId}/${conversationId}`, {
           method: "DELETE"
         }).catch(console.error);
       }
