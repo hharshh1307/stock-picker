@@ -243,12 +243,27 @@ def get_strategy_recommendations(store: DataStore, frequency: str, amount: float
     
     stocks_data = [dict(r) for r in rows]
     
-    # Pre-filter: only score top candidates based on frequency heuristic
+    # Pre-filter: only score top candidates based on frequency heuristic.
+    # HARD SAFETY GATE: never rank real money on predictions from a model that
+    # failed out-of-sample validation. signal_engine enforces this via
+    # retrieve_top_k(), but this path read ml_predictions.json directly and
+    # would otherwise bypass the gate entirely.
+    ml_preds = {}
+    ml_trust = {"trusted": False, "reason": "not checked"}
     try:
-        from ml_pipeline import get_ml_predictions
-        ml_preds = get_ml_predictions()
+        from ml_pipeline import get_ml_predictions, predictions_trustworthy
+        ok, reason = predictions_trustworthy()
+        ml_trust = {"trusted": bool(ok), "reason": str(reason)}
+        if ok:
+            ml_preds = get_ml_predictions()
+        else:
+            logger.warning(
+                f"ML predictions rejected by trust gate: {reason} "
+                f"Falling back to heuristics for {frequency} recommendations."
+            )
     except Exception as e:
-        ml_preds = {}
+        logger.warning(f"Could not load ML predictions: {e}")
+        ml_trust = {"trusted": False, "reason": f"error: {e}"}
 
     if frequency == "Daily":
         # Daily: prefer stocks with recent moderate moves and decent volume
@@ -262,21 +277,38 @@ def get_strategy_recommendations(store: DataStore, frequency: str, amount: float
         candidates = stocks_data[:80]  # Will be re-scored by fundamentals
     else:
         candidates = stocks_data[:80]
+
+    # Only recommend names that pass the tradability filter — an illiquid
+    # smallcap is not a real recommendation regardless of how it scores.
+    tradable = set(store.get_tradable_universe())
+    if not tradable:
+        logger.warning("No tradable symbols found — not enough price history yet.")
+    else:
+        before = len(candidates)
+        candidates = [c for c in candidates if c["symbol"] in tradable]
+        if before != len(candidates):
+            logger.info(f"Tradability filter dropped {before - len(candidates)} of {before} candidates.")
     
     # Score stocks based on True ML Pipeline strategy
     scored = []
     for s in candidates:
         sym = s["symbol"]
-        
+        if sym not in tradable:
+            continue
+
         # If we have ML predictions, use them!
         if ml_preds and sym in ml_preds:
             ml_data = ml_preds[sym]
-            
-            daily_score = ml_data["ml_1_day_momentum_score"]
-            weekly_score = ml_data["ml_1_week_trend_score"]
-            monthly_score = ml_data["ml_1_month_value_score"]
-            yearly_score = ml_data["ml_1_year_fundamental_score"]
-            
+
+            # Keys as written by ml_pipeline._generate_and_save_predictions
+            daily_score = ml_data.get("ml_1d_score") or 0.0
+            weekly_score = ml_data.get("ml_1w_score") or 0.0
+            monthly_score = ml_data.get("ml_1m_score") or 0.0
+            # No 1-year ML model exists (ml_pipeline trains 1d/1w/1m only), so
+            # Yearly/Long-term reuse the 1m score as a proxy — same convention
+            # as signal_engine.retrieve_top_k.
+            yearly_score = monthly_score
+
             # The primary score dictating rank is based on the requested frequency
             if frequency == "Daily":
                 primary_score = daily_score
@@ -369,6 +401,8 @@ def get_strategy_recommendations(store: DataStore, frequency: str, amount: float
         "market_breadth_30d": round(ratio_30d, 2),
         "top_picks": allocations,
         "strategy_description": _get_strategy_description(frequency),
+        # Surfaced so the API/UI cannot silently present unvalidated ML picks.
+        "ml_status": ml_trust,
     }
 
 

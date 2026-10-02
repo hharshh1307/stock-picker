@@ -8,7 +8,7 @@
 *Nifty 500 stock discovery platform with AI chat*
 
 - [x] Nifty 500 stock list ingestion (nselib + yfinance)
-- [x] 2-year OHLCV price data pipeline
+- [x] 5-year OHLCV price data pipeline
 - [x] Quarterly financial statements pipeline
 - [x] News pipeline (GNews + RSS)
 - [x] Nifty 500 index data
@@ -23,40 +23,41 @@
 
 ---
 
-## Phase 2: Smart Portfolio & Data Quality 🔨 IN PROGRESS
+## Phase 2: Smart Portfolio & Data Quality 🟡 PARTIALLY COMPLETE
 *Make the tool actually useful for daily portfolio management*
 
-### P0 — Must Have
-- [ ] **Portfolio P&L dashboard** — Current value, total gain/loss, daily change per holding
-- [ ] **Data freshness tracking** — Show last refresh date, flag stale data
-- [ ] **Automated pipeline scheduling** — Daily price refresh at minimum
-- [ ] **AI agent portfolio integration** — Deep portfolio-aware analysis in chat
+### Done ✅
+- [x] **Groww broker integration** — Full rewrite with TOTP, margin, positions
+- [x] **Daily price auto-refresh** — APScheduler at 16:00 IST + startup check
+- [x] **ML pipeline v2** — 14 features, HistGradientBoosting, 3 horizons
+- [x] **Signal engine** — RAG-style ML → AI analysis → BUY/HOLD/SKIP
+- [x] **Auth system** — Google OAuth + login/register
+- [x] **Admin dashboard** — Admin API + frontend page
+- [x] **Portfolio P&L analyzer** — Diversification, concentration, sector allocation
+- [x] **Backtester** — Signal performance validation
+- [x] **Audit logger** — Chat audit trail
+- [x] **Switch to Gemini 2.5 Flash** — Cost-effective, fast
 
-### P1 — Should Have
-- [ ] **Risk metrics** — Portfolio beta, sector allocation %, concentration risk
-- [ ] **Mutual fund basic support** — AMFI NAV data, display alongside stocks
-- [ ] **Stock comparison page** — Side-by-side UI for 2-5 stocks
-- [ ] **Watchlist feature** — Save and monitor stocks of interest
-- [ ] **Data quality dashboard** — Completeness, coverage, pipeline success rates
-
-### P2 — Nice to Have
-- [ ] **Goal-based planning** — Map plans to goals (retirement, house, education)
-- [ ] **Historical P&L** — Track portfolio value over time
-- [ ] **Mobile responsiveness** — Polish for phone/tablet use
-- [ ] **Export reports** — PDF/CSV export of portfolio analysis
+### Remaining 🔨
+- [ ] **AI agent portfolio deep integration** — Inject holdings + P&L into agent context
+- [ ] **Risk metrics on frontend** — Display beta, concentration, sector allocation
+- [ ] **Data quality dashboard** — Visual pipeline health
+- [ ] **Watchlist feature** — Save and monitor stocks
+- [ ] **Stock comparison UI** — Side-by-side view (backend ready)
 
 ---
 
-## Phase 3: Intelligence Layer 🔮 PLANNED
-*ML-powered insights and advanced analysis*
+## Phase 3: Multi-Asset & Intelligence 🔮 PLANNED
+*Expand beyond stocks, add smarter analysis*
 
-- [ ] **Stock scoring model** — Composite score (fundamentals + technicals + sentiment)
-- [ ] **News sentiment analysis** — FinBERT or similar NLP on news
+- [ ] **Mutual fund support** — AMFI NAV data, display alongside stocks
+- [ ] **News sentiment analysis** — FinBERT or similar NLP
 - [ ] **Anomaly detection** — Flag unusual price/volume patterns
 - [ ] **Portfolio optimization** — Mean-variance, rebalancing suggestions
 - [ ] **Automated alerts** — Price targets, unusual activity, portfolio triggers
-- [ ] **Global market context** — US markets, crude, USD/INR impact analysis
-- [ ] **Tax-aware recommendations** — LTCG/STCG impact on buy/sell decisions
+- [ ] **Global market context** — US markets, crude, USD/INR impact
+- [ ] **Tax-aware recommendations** — LTCG/STCG impact on buy/sell
+- [ ] **Goal-based planning** — Link investment plans to life goals
 
 ---
 
@@ -64,8 +65,10 @@
 *Production hardening and growth features*
 
 - [ ] **Postgres migration** — Move from SQLite for multi-user support
-- [ ] **User authentication** — Multi-user with separate portfolios
-- [ ] **API rate limiting** — Protect backend from abuse
+- [ ] **API rate limiting & versioning** — Production-grade API
+- [ ] **Test suite** — pytest + Playwright
 - [ ] **PWA / mobile app** — Installable app experience
 - [ ] **Community features** — Share analyses, follow strategies
-- [ ] **Premium data sources** — Consider paid APIs for better reliability
+- [ ] **Premium data sources** — Paid APIs for better reliability
+- [ ] **Historical portfolio value** — Track total value over time
+- [ ] **Export reports** — PDF/CSV of portfolio analysis

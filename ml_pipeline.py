@@ -23,7 +23,7 @@ from sklearn.preprocessing import RobustScaler
 from sklearn.metrics import mean_absolute_error, r2_score, accuracy_score, roc_auc_score
 import joblib
 
-from config import DATA_DIR
+from config import DATA_DIR, PRICE_HISTORY_DAYS
 from data_store import DataStore
 
 logger = logging.getLogger(__name__)
@@ -67,66 +67,86 @@ def extract_features_targets(prices_df: pd.DataFrame, index_df: Optional[pd.Data
     Given a dataframe of prices for a single stock (sorted by date ascending),
     compute 14 technical features and forward return + outperformance targets.
 
+    All return-derived features and targets are computed from `adj_close` (the
+    split/dividend-adjusted series) rather than the raw `close`. Using the raw
+    close injects artificial gaps on ex-dividend dates that look like real
+    losses and corrupt every momentum and volatility feature. Only falls back to
+    `close` if `adj_close` is absent or entirely null.
+
     Args:
-        prices_df: columns = [date, open, high, low, close, volume]
+        prices_df: columns = [date, open, high, low, close, adj_close, volume]
         index_df: Nifty 500 daily prices [date, close] for relative-strength feature.
                   If None, rel_strength_20d is set to 0.
     """
     df = prices_df.copy().sort_values("date").reset_index(drop=True)
 
+    # Total-return price series used for every feature and target below.
+    adj = df["adj_close"] if "adj_close" in df.columns else None
+    if adj is not None and adj.notna().any():
+        px = adj.astype("float64")
+    else:
+        px = df["close"].astype("float64")
+
     # ── Momentum ───────────────────────────────────────────────────────────────
-    df["ret_1d"]  = df["close"].pct_change(1)
-    df["ret_5d"]  = df["close"].pct_change(5)
-    df["ret_20d"] = df["close"].pct_change(20)
-    df["ret_90d"] = df["close"].pct_change(90)
+    df["ret_1d"]  = px.pct_change(1)
+    df["ret_5d"]  = px.pct_change(5)
+    df["ret_20d"] = px.pct_change(20)
+    df["ret_90d"] = px.pct_change(90)
 
     # ── Volatility ─────────────────────────────────────────────────────────────
     df["vol_20d"] = df["ret_1d"].rolling(20).std() * np.sqrt(252)
 
     # ── SMA distance ───────────────────────────────────────────────────────────
-    sma_20 = df["close"].rolling(20).mean()
-    sma_50 = df["close"].rolling(50).mean()
-    df["dist_sma_20"] = (df["close"] - sma_20) / sma_20.replace(0, np.nan)
-    df["dist_sma_50"] = (df["close"] - sma_50) / sma_50.replace(0, np.nan)
+    sma_20 = px.rolling(20).mean()
+    sma_50 = px.rolling(50).mean()
+    df["dist_sma_20"] = (px - sma_20) / sma_20.replace(0, np.nan)
+    df["dist_sma_50"] = (px - sma_50) / sma_50.replace(0, np.nan)
 
     # ── Volume ─────────────────────────────────────────────────────────────────
     vol_ma_5  = df["volume"].rolling(5).mean()
     vol_ma_20 = df["volume"].rolling(20).mean()
     vol_ma_90 = df["volume"].rolling(90).mean()
-    df["vol_ratio_5d"]  = vol_ma_5  / (vol_ma_20  + 1e-5)
+    df["vol_ratio_5d"]  = vol_ma_5  / (vol_ma_20 + 1e-5)
     df["vol_spike_90d"] = df["volume"] / (vol_ma_90 + 1e-5)
 
     # ── RSI (14) ───────────────────────────────────────────────────────────────
-    delta = df["close"].diff()
+    delta = px.diff()
     gain  = delta.clip(lower=0).rolling(14).mean()
     loss  = (-delta.clip(upper=0)).rolling(14).mean()
     rs = gain / loss.replace(0, np.nan)
     df["rsi_14"] = 100 - (100 / (1 + rs))
 
     # ── MACD (12, 26, 9) signal line position ──────────────────────────────────
-    ema12  = _ema(df["close"], 12)
-    ema26  = _ema(df["close"], 26)
+    ema12  = _ema(px, 12)
+    ema26  = _ema(px, 26)
     macd   = ema12 - ema26
     signal = _ema(macd, 9)
     # Normalise by price so it's scale-invariant
-    df["macd_signal"] = (macd - signal) / df["close"].replace(0, np.nan)
+    df["macd_signal"] = (macd - signal) / px.replace(0, np.nan)
 
     # ── Bollinger Band %B ──────────────────────────────────────────────────────
-    bb_mid   = df["close"].rolling(20).mean()
-    bb_std   = df["close"].rolling(20).std()
+    bb_mid   = px.rolling(20).mean()
+    bb_std   = px.rolling(20).std()
     bb_upper = bb_mid + 2 * bb_std
     bb_lower = bb_mid - 2 * bb_std
     bb_range = (bb_upper - bb_lower).replace(0, np.nan)
-    df["bb_pct_b"] = (df["close"] - bb_lower) / bb_range
+    df["bb_pct_b"] = (px - bb_lower) / bb_range
 
     # ── 52-week high / low distance ────────────────────────────────────────────
-    high_252 = df["high"].rolling(252, min_periods=60).max()
-    low_252  = df["low"].rolling(252, min_periods=60).min()
-    df["dist_52w_high"] = (df["close"] - high_252) / high_252.replace(0, np.nan)
-    df["dist_52w_low"]  = (df["close"] - low_252)  / low_252.replace(0, np.nan)
+    # Derived from the adjusted series so the reference level and the current
+    # price are on the same scale (raw high/low are not adjusted for dividends).
+    high_252 = px.rolling(252, min_periods=60).max()
+    low_252  = px.rolling(252, min_periods=60).min()
+    df["dist_52w_high"] = (px - high_252) / high_252.replace(0, np.nan)
+    df["dist_52w_low"]  = (px - low_252)  / low_252.replace(0, np.nan)
 
     # ── Relative strength vs Nifty 500 index (20d) ────────────────────────────
     if index_df is not None and not index_df.empty:
+        # NOTE: stock returns use adj_close (dividends reinvested) but the
+        # available free Nifty 500 feed is PRICE-only. That biases
+        # rel_strength_20d upward by ~the index dividend yield. See
+        # config.INDEX_RETURN_TYPE. Do not read this as a clean alpha measure
+        # until a total-return benchmark is wired in.
         idx = index_df.set_index("date")["close"].rename("idx_close")
         df = df.join(idx, on="date", how="left")
         df["idx_close"] = df["idx_close"].ffill()
@@ -136,9 +156,9 @@ def extract_features_targets(prices_df: pd.DataFrame, index_df: Optional[pd.Data
         df["rel_strength_20d"] = 0.0
 
     # ── Forward return targets (regression) ───────────────────────────────────
-    df["target_1d"] = df["close"].shift(-1)  / df["close"] - 1
-    df["target_1w"] = df["close"].shift(-5)  / df["close"] - 1
-    df["target_1m"] = df["close"].shift(-20) / df["close"] - 1
+    df["target_1d"] = px.shift(-1)  / px - 1
+    df["target_1w"] = px.shift(-5)  / px - 1
+    df["target_1m"] = px.shift(-20) / px - 1
 
     # ── Classification target: outperforms Nifty 500 over next 20 days ─────────
     if index_df is not None and not index_df.empty and "idx_close" in df.columns:
@@ -170,7 +190,10 @@ def build_dataset(store: DataStore) -> dict:
     latest_features = {}   # symbol → latest feature vector for prediction
 
     for stock in stocks:
-        prices = store.get_price_series(stock.symbol, days=800)
+        # ~5 years of calendar days; PRICE_HISTORY_PERIOD is 5y. The 52-week
+        # rolling features need 252 observations, and walk-forward validation
+        # needs several years of history to retrain on.
+        prices = store.get_price_series(stock.symbol, days=PRICE_HISTORY_DAYS)
         if len(prices) < 120:
             continue
 
@@ -399,6 +422,60 @@ def get_ml_metrics() -> list:
         with open(METRICS_FILE) as f:
             return json.load(f)
     return []
+
+
+# ── Trust Gate ─────────────────────────────────────────────────────────────────
+# A model that cannot beat a zero-skill baseline on held-out data must not be
+# allowed to drive position selection. R2 <= 0 means the regression is worse
+# than predicting the training mean; AUC <= 0.5 means the classifier carries no
+# ranking information (and below 0.5 it is actively inverted, i.e. it will
+# systematically prefer the losers). These are deliberately low bars — they
+# only reject models with demonstrated negative skill, not mediocre ones.
+
+MIN_R2 = 0.0
+MIN_ROC_AUC = 0.52
+
+
+def predictions_trustworthy() -> tuple[bool, str]:
+    """
+    Check the last training run's out-of-sample metrics against the trust gate.
+
+    Returns (ok, reason). Callers must not generate trade signals when ok is
+    False — an untrustworthy model is worse than no model, because the ranking
+    it produces looks identical to a good one.
+    """
+    metrics = get_ml_metrics()
+    if not metrics:
+        return False, "No training metrics found — train_models() has not completed."
+
+    by_model = {m.get("model"): m for m in metrics}
+
+    for horizon in ("1d", "1w", "1m"):
+        m = by_model.get(f"regression_{horizon}")
+        if not m:
+            return False, f"Missing metrics for regression_{horizon}."
+        r2 = m.get("R2")
+        if r2 is None:
+            return False, f"No R2 reported for regression_{horizon}."
+        if r2 <= MIN_R2:
+            return False, (
+                f"regression_{horizon} R2={r2} (needs > {MIN_R2}). "
+                "Model is worse than a zero-skill baseline out-of-sample."
+            )
+
+    clf = by_model.get("classification_outperform_20d")
+    if not clf:
+        return False, "Missing metrics for classification_outperform_20d."
+    auc = clf.get("roc_auc")
+    if auc is None:
+        return False, "No roc_auc reported for the outperformance classifier."
+    if auc <= MIN_ROC_AUC:
+        inverted = " (INVERTED — ranks losers above winners)" if auc < 0.5 else ""
+        return False, (
+            f"Outperformance classifier AUC={auc} (needs > {MIN_ROC_AUC}){inverted}."
+        )
+
+    return True, "All out-of-sample metrics pass the trust gate."
 
 
 if __name__ == "__main__":

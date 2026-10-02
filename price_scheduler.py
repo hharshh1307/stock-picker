@@ -25,20 +25,72 @@ DAILY_TRIGGER_HOUR_UTC = 10
 DAILY_TRIGGER_MINUTE_UTC = 30
 
 
-def _is_trading_day(d: date) -> bool:
-    """Returns True if the date is a weekday (Mon–Fri). Does not check NSE holidays."""
-    return d.weekday() < 5  # 0=Mon, 4=Fri
+def _index_trading_days(store) -> list[date]:
+    """Actual NSE session dates, derived from stored market data.
+
+    A weekday check is not a trading calendar: NSE observes ~14 holidays a year
+    (plus occasional unscheduled closures), so a weekday-only scheduler fires on
+    days the exchange is shut.
+
+    Sourced from the UNION of index and price dates, not index_data alone. The
+    index feed can be sparse (nselib silently truncates responses), and a
+    calendar built from a sparse table would report *valid trading days* as
+    holidays — the worst possible failure for a trading calendar.
+    """
+    if store is None:
+        return []
+    try:
+        rows = store.conn.execute(
+            """
+            SELECT date FROM index_data
+            UNION
+            SELECT date FROM prices
+            ORDER BY date DESC LIMIT 1500
+            """
+        ).fetchall()
+        out = []
+        for r in rows:
+            try:
+                out.append(date.fromisoformat(r["date"]))
+            except (TypeError, ValueError):
+                continue
+        return out
+    except Exception as e:
+        logger.warning("Could not read trading calendar from market data: %s", e)
+        return []
 
 
-def _last_trading_day() -> date:
-    """Returns the most recent trading day (today if weekday and after 3:45 PM IST, else previous weekday)."""
+def _is_trading_day(d: date, store=None) -> bool:
+    """True if the NSE traded on this date. Falls back to a weekday check only
+    when no index history is available yet."""
+    sessions = _index_trading_days(store) if store is not None else []
+    if sessions:
+        return d in set(sessions)
+    return d.weekday() < 5  # fallback: Mon–Fri
+
+
+def _last_trading_day(store=None) -> date:
+    """
+    Most recent NSE session. If today is a weekday on/after the ~15:45 IST close
+    we can treat today as a session only if the index has a row for it; otherwise
+    walk back to the most recent known session.
+    """
     now_ist = datetime.utcnow() + timedelta(hours=IST_OFFSET_HOURS, minutes=IST_OFFSET_MINUTES)
     d = now_ist.date()
-    # If it's before market close (15:45 IST), use the previous trading day
     market_close_ist = now_ist.replace(hour=15, minute=45, second=0, microsecond=0)
     if now_ist < market_close_ist:
         d -= timedelta(days=1)
-    # Walk back to last weekday
+
+    sessions = _index_trading_days(store) if store is not None else []
+    if sessions:
+        known = set(sessions)
+        if d in known:
+            return d
+        earlier = [s for s in sessions if s <= d]
+        if earlier:
+            return max(earlier)
+
+    # No usable index history — fall back to walking back over weekdays
     while not _is_trading_day(d):
         d -= timedelta(days=1)
     return d
@@ -63,7 +115,7 @@ def _prices_are_stale(store) -> bool:
             logger.info("No price data in DB — prices are stale.")
             return True
         latest_in_db = date.fromisoformat(row["max_date"])
-        last_trading = _last_trading_day()
+        last_trading = _last_trading_day(store)
         is_stale = latest_in_db < last_trading
         if is_stale:
             logger.info(f"Prices stale: DB has {latest_in_db}, last trading day is {last_trading}.")

@@ -12,8 +12,39 @@ YFINANCE_BATCH_SIZE = 50
 YFINANCE_BATCH_DELAY_SEC = 3.0
 YFINANCE_RETRY_COUNT = 3
 YFINANCE_RETRY_BACKOFF = 5.0
-PRICE_HISTORY_PERIOD = "2y"
+PRICE_HISTORY_PERIOD = "5y"
 PRICE_HISTORY_INTERVAL = "1d"
+
+# Tradability filter. Signals are only ever generated for names that could
+# actually be bought or sold at a sane size — a momentum screen that surfaces an
+# illiquid smallcap is a trap, not an opportunity. Thresholds are in rupees of
+# average daily traded value over the lookback window.
+MIN_AVG_TRADED_VALUE = 5_000_000   # Rs 5 crore/day
+MIN_LIQUIDITY_LOOKBACK_DAYS = 90
+MIN_LATEST_PRICE = 20.0            # Rs — filters out penny/penny-like stocks
+MIN_PRICE_HISTORY_DAYS = 250       # need a year of history to score reliably
+
+# Calendar days of price history to load for ML feature building. Keep in step
+# with PRICE_HISTORY_PERIOD (5y ≈ 1825 calendar days, plus a small margin).
+PRICE_HISTORY_DAYS = 1900
+
+# Benchmark index. Prefer the dividend-reinvested series: comparing a
+# total-return stock portfolio against a price-only index overstates alpha.
+INDEX_PRIMARY = "Nifty 500 TRI"
+INDEX_FALLBACK = "Nifty 500"
+
+# Honest note on the benchmark: a true Nifty 500 Total Return index is not
+# available from the free sources this project uses. Probed and confirmed to
+# return no data: ^NIFTY500TR, ^CNXTR, ^NSE500, ^NSETR, 500TR.NS (yfinance) and
+# "Nifty 500 TRI" / "Nifty 50 TRI" (nselib). Only the PRICE index is obtainable
+# (^CRSLDX on yfinance, "Nifty 500" on nselib).
+#
+# Consequence: stock features use adj_close (dividends reinvested) while the
+# benchmark uses a price-only close. That biases measured relative strength in
+# the stock's favour by roughly the index dividend yield. This is surfaced in
+# the admin health check rather than hidden, and is on the fix list for Phase 2
+# (needs a licensed TRI feed or a dividend-yield adjustment).
+INDEX_RETURN_TYPE = "price"  # not "total_return" — see note above
 
 # Financials settings
 FINANCIALS_BATCH_SIZE = 20
@@ -35,6 +66,18 @@ RSS_FEEDS = {
 
 # nselib settings
 NSELIB_INDEX_NAME = "Nifty 500"
+
+# Index universe for the pipeline. Fetching every NSE-listed equity (~2,600
+# names) multiplies yfinance load, takes over an hour to enrich, and floods the
+# screen with microcaps that cannot be traded at size.
+#
+# All four are official NSE lists via nselib, together ~500 names (a
+# Nifty-500-equivalent band). Do NOT re-add "nifty500" from the niftystocks
+# package: that list is stale and still carries pre-merger tickers (LTI and
+# MINDTREE rather than LTIM, HDFC rather than HDFCBANK, IDFC rather than
+# IDFCFINBANK, TATAMOTORS rather than TMPV). Those symbols return zero price
+# data forever. The nselib lists return the current names.
+UNIVERSE_INDICES = ["nifty50", "niftynext50", "niftymidcap150", "niftysmallcap250"]
 
 # Logging
 LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"

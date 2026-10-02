@@ -6,24 +6,29 @@
 |-------|-----------|-------|
 | **Frontend** | Next.js 16 (App Router), TypeScript, Tailwind CSS, shadcn/ui, Recharts | Deployed on Vercel |
 | **Backend** | Python 3.12+, FastAPI, uvicorn | Deployed on Railway |
-| **Database** | SQLite (WAL mode) | `data/stock_picker.db` (~41MB) |
-| **AI/LLM** | OpenAI GPT-4o (primary), GPT-4o-mini (fallback) | ReAct agent with tool calling |
+| **Database** | SQLite (WAL mode) | `data/stock_picker.db` (~80MB) |
+| **AI/LLM** | Gemini 2.5 Flash via OpenAI-compatible API | ReAct agent with tool calling |
+| **ML** | scikit-learn HistGradientBoosting (regression + classification) | 14 features, 3 horizons |
 | **Data Sources** | yfinance, GNews API, RSS feeds (ET, MoneyControl), nselib | Free/low-cost |
+| **Broker** | Groww API (read-only, TOTP-capable) | Live portfolio sync |
 | **Package Manager** | uv (Python), npm (Node.js) | |
 | **Deployment** | Railway (backend), Vercel (frontend) | |
 
 ## Architecture Diagram
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    FRONTEND (Next.js 16)                 │
-│  ┌──────────┐ ┌──────────┐ ┌─────────┐ ┌────────────┐  │
-│  │Discovery │ │  Chat    │ │ Stock   │ │ Portfolio  │  │
-│  │  Page    │ │  Page    │ │ Detail  │ │ & Settings │  │
-│  └────┬─────┘ └────┬─────┘ └────┬────┘ └─────┬──────┘  │
-│       └─────────────┴────────────┴─────────────┘        │
-│                         │ API calls                      │
-└─────────────────────────┼───────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                    FRONTEND (Next.js 16)                     │
+│  ┌──────────┐ ┌──────────┐ ┌─────────┐ ┌────────────────┐  │
+│  │Discovery │ │  Chat    │ │ Stock   │ │ Portfolio/     │  │
+│  │  Page    │ │  Page    │ │ Detail  │ │ Signals/Admin  │  │
+│  └────┬─────┘ └────┬─────┘ └────┬────┘ └──────┬─────────┘  │
+│       └─────────────┴────────────┴──────────────┘           │
+│                         │ API calls                          │
+│  ┌─────────────────────────────────────┐                     │
+│  │ Auth: Google OAuth + Login/Register │                     │
+│  └─────────────────────────────────────┘                     │
+└─────────────────────────┼────────────────────────────────────┘
                           │
               ┌───────────┴───────────┐
               │   BACKEND (FastAPI)    │
@@ -32,12 +37,20 @@
               │  /api/stocks/*         │
               │  /api/chat (SSE)       │
               │  /api/user/*           │
+              │  /api/signals/*        │
+              │  /api/admin/*          │
+              │  /api/auth/*           │
               │                        │
               │  ┌──────────────────┐  │
               │  │  AI Agent        │  │
               │  │  (ReAct Loop)    │  │
-              │  │  13 tools        │  │
-              │  │  GPT-4o          │  │
+              │  │  13+ tools       │  │
+              │  │  Gemini 2.5 Flash│  │
+              │  └──────────────────┘  │
+              │                        │
+              │  ┌──────────────────┐  │
+              │  │ Signal Engine    │  │
+              │  │ ML → AI → Signal │  │
               │  └──────────────────┘  │
               │                        │
               │  ┌──────────────────┐  │
@@ -46,8 +59,13 @@
               │  └──────────────────┘  │
               │                        │
               │  ┌──────────────────┐  │
-              │  │  Market Intel    │  │
-              │  │  Breadth/Sectors │  │
+              │  │ Portfolio Analyzer│  │
+              │  │ P&L, risk, alloc │  │
+              │  └──────────────────┘  │
+              │                        │
+              │  ┌──────────────────┐  │
+              │  │ Price Scheduler  │  │
+              │  │ APScheduler 16:00│  │
               │  └──────────────────┘  │
               └───────────┬────────────┘
                           │
@@ -56,15 +74,24 @@
               │                        │
               │  SQLite (WAL mode)     │
               │  ┌──────────────────┐  │
-              │  │ stocks (500)     │  │
-              │  │ prices (2yr)     │  │
+              │  │ stocks (~500)    │  │
+              │  │ prices (5yr)     │  │
               │  │ financials (qtly)│  │
               │  │ news             │  │
               │  │ index_data       │  │
               │  │ user_profiles    │  │
               │  │ investment_plans │  │
               │  │ portfolio_items  │  │
+              │  │ signal_*         │  │
               │  │ fetch_log        │  │
+              │  │ users            │  │
+              │  └──────────────────┘  │
+              │                        │
+              │  ML Models (joblib)    │
+              │  ┌──────────────────┐  │
+              │  │ data/ml_models/  │  │
+              │  │ ml_predictions   │  │
+              │  │ oot_metrics      │  │
               │  └──────────────────┘  │
               └───────────┬────────────┘
                           │
@@ -77,56 +104,80 @@
               │  fetch_news            │
               │  fetch_index_data      │
               │  market_intelligence   │
+              │  ml_pipeline           │
+              │  signal_engine         │
               └────────────────────────┘
 ```
 
 ## Key File Map
 
 ### Backend (Python)
-| File | Purpose | Lines |
-|------|---------|-------|
-| `main.py` | CLI entry point (argparse), pipeline orchestration | 235 |
-| `api_server.py` | FastAPI app, CORS, router mounting | 113 |
-| `api_routes/*.py` | API endpoint handlers (discovery, stocks, chat, user) | ~13K |
-| `data_store.py` | SQLite DAL — all queries, schema, migrations | 645 |
-| `discovery_engine.py` | 8 stock buckets computation | 611 |
-| `market_intelligence.py` | Market breadth, sectors, movers, volume analysis | ~500 |
-| `agent.py` | FinancialExpertAgent — ReAct loop with tool calling | ~250 |
-| `agent_tools.py` | 13 tool definitions with OpenAI function schemas | ~700 |
-| `agent_prompts.py` | System prompt for "Nifty Sage" persona | 142 |
-| `models.py` | Dataclasses: Asset, PriceRecord, Financial, Portfolio, etc. | 112 |
-| `config.py` | Paths, batch sizes, delays, thresholds | 45 |
-| `fetch_*.py` | Data pipeline scripts (list, prices, financials, news, index) | ~30K |
+| File | Purpose | Size |
+|------|---------|------|
+| `main.py` | CLI entry point (argparse), pipeline orchestration | 9KB |
+| `api_server.py` | FastAPI app, CORS, router mounting, lifespan | 4KB |
+| `api_routes/*.py` | 7 API endpoint groups (discovery, stocks, chat, user, signals, admin, auth) | ~53KB |
+| `data_store.py` | SQLite DAL — all queries, schema, migrations | 33KB |
+| `discovery_engine.py` | 8 stock buckets computation | 24KB |
+| `market_intelligence.py` | Market breadth, sectors, movers, volume analysis | 20KB |
+| `agent.py` | FinancialExpertAgent — ReAct loop with Gemini | 19KB |
+| `agent_tools.py` | 13+ tool definitions with OpenAI function schemas | 45KB |
+| `agent_prompts.py` | System prompt for "Nifty Sage" persona | 10KB |
+| `signal_engine.py` | RAG-style signal pipeline (ML → AI → BUY/HOLD/SKIP) | 22KB |
+| `ml_pipeline.py` | 14-feature ML models, 3 horizons, time-split | 22KB |
+| `portfolio_analyzer.py` | P&L, diversification, concentration, sector allocation | 25KB |
+| `groww_integration.py` | Groww broker API (TOTP auth, holdings, positions, margin) | 9KB |
+| `price_scheduler.py` | APScheduler daily refresh at 16:00 IST | 11KB |
+| `backtester.py` | Signal performance backtesting | 7KB |
+| `audit_logger.py` | Chat audit trail | 4KB |
+| `intent_classifier.py` | User intent classification for agent routing | 10KB |
+| `embedding_search.py` | Semantic search over stock data | 7KB |
+| `screener_scraper.py` | Screener.in data scraping | 15KB |
+| `alternative_assets.py` | Multi-asset support (beyond stocks) | 5KB |
+| `models.py` | Dataclasses: Asset, PriceRecord, Financial, Portfolio | 2KB |
+| `config.py` | Paths, batch sizes, delays, thresholds, universe config | 4KB |
+| `fetch_*.py` | Data pipeline scripts (list, prices, financials, news, index) | ~40KB |
 
 ### Frontend (Next.js)
 | Path | Purpose |
 |------|---------|
-| `web/src/app/page.tsx` | Discovery page (server component) |
+| `web/src/app/page.tsx` | Discovery page (home) |
 | `web/src/app/chat/` | AI chat interface |
 | `web/src/app/stock/` | Stock detail page |
 | `web/src/app/portfolio/` | Portfolio management |
+| `web/src/app/signals/` | ML signal display |
+| `web/src/app/admin/` | Admin dashboard |
+| `web/src/app/login/` | Login page |
+| `web/src/app/register/` | Registration page |
 | `web/src/app/settings/` | User profile & investment plans |
 | `web/src/components/discovery/` | Market pulse, sector grid, buckets, movers |
 | `web/src/components/chat/` | Chat UI components |
 | `web/src/components/layout/` | Navigation, layout shells |
+| `web/src/components/stock/` | Stock detail components |
+| `web/src/components/shared/` | Shared components |
 | `web/src/components/ui/` | shadcn/ui primitives |
-| `web/src/lib/api.ts` | API client (fetch wrapper) |
-| `web/src/lib/types.ts` | TypeScript interfaces for all API responses |
-| `web/src/lib/utils.ts` | Utility functions |
+| `web/src/lib/` | API client, types, utilities |
+| `web/src/middleware.ts` | Auth middleware |
 
 ## Database Schema (SQLite)
 
 ### Core Tables
-- **stocks** — 500 Nifty stocks (symbol PK, yahoo_symbol, company_name, asset_type, sector, industry)
-- **prices** — Daily OHLCV (symbol+date unique, 2 years history)
+- **stocks** — ~500 Nifty stocks (symbol PK, yahoo_symbol, company_name, asset_type, sector, industry)
+- **prices** — Daily OHLCV (symbol+date unique, 5 years history)
 - **quarterly_financials** — Income, balance sheet, cashflow (JSON blobs per quarter)
 - **news** — Stock-specific + market news (symbol+url unique)
 - **index_data** — Nifty 500 index daily data
 
 ### User Tables
-- **user_profiles** — Risk tolerance, total capital, expected returns (single row)
+- **users** — Auth users (Google OAuth + local registration)
+- **user_profiles** — Risk tolerance, total capital, expected returns
 - **investment_plans** — Frequency-based plans (Daily/Weekly/Monthly/Yearly/Long-term)
 - **portfolio_items** — Holdings (symbol, quantity, avg_buy_price, strategy_frequency)
+
+### Signal Tables
+- **signal_candidates** — ML-retrieved top-K candidates per frequency
+- **signal_decisions** — AI agent BUY/HOLD/SKIP decisions
+- **signal_outcomes** — Actual returns after holding period (back-filled)
 
 ### System Tables
 - **fetch_log** — Pipeline execution audit trail
@@ -150,3 +201,6 @@
 | POST | `/api/user/plans` | Create/update plan |
 | GET | `/api/user/portfolio` | Get portfolio items |
 | POST | `/api/user/portfolio` | Add portfolio item |
+| GET | `/api/signals/*` | ML signal endpoints |
+| GET | `/api/admin/*` | Admin dashboard data |
+| POST | `/api/auth/*` | Auth (login, register, OAuth) |

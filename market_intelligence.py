@@ -241,6 +241,16 @@ def get_market_breadth(store: DataStore, days: int = 30) -> dict:
     unchanged = sum(1 for r in rows if r["end_price"] == r["start_price"])
     total = len(rows)
 
+    # A/D ratio. Guard the divide-by-zero: no decliners means breadth is
+    # maximally *strong*, not zero — returning 0 here previously made
+    # portfolio_analyzer read an all-green tape as a bearish signal.
+    if declining:
+        ratio = advancing / declining
+    elif advancing:
+        ratio = float(advancing)
+    else:
+        ratio = 1.0
+
     return {
         "total": total,
         "advancing": advancing,
@@ -248,7 +258,7 @@ def get_market_breadth(store: DataStore, days: int = 30) -> dict:
         "unchanged": unchanged,
         "advance_pct": round(advancing / total * 100, 1) if total else 0,
         "decline_pct": round(declining / total * 100, 1) if total else 0,
-        "breadth_ratio": round(advancing / declining, 2) if declining else 0,
+        "breadth_ratio": round(ratio, 2),
     }
 
 
