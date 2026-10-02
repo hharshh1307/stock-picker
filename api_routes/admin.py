@@ -3,8 +3,10 @@ Only accessible when the frontend passes the admin token (enforced by Next.js mi
 """
 
 import json
+import logging
 import os
 import subprocess
+import sys
 import threading
 import time
 from datetime import datetime
@@ -13,10 +15,13 @@ from typing import Any
 
 from fastapi import APIRouter, Header, HTTPException
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
 
 ADMIN_TOKEN = os.getenv("ADMIN_API_TOKEN", "niftysage-admin-2025")
-PROJECT_ROOT = Path(__file__).parent
+# Repo root, not the api_routes/ dir — this is the cwd for spawned `main.py` jobs.
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 def _require_admin(x_admin_token: str | None):
@@ -57,9 +62,9 @@ async def system_stats(x_admin_token: str | None = Header(default=None)) -> dict
         "SELECT MAX(published_at) as d FROM news"
     ).fetchone()["d"]
 
-    # Embedding file info
-    data_dir = Path("data")
-    embedding_file = data_dir / "stock_embeddings.json"
+    # Embedding file info — resolve against DATA_DIR, not the process cwd
+    from config import DATA_DIR
+    embedding_file = DATA_DIR / "stock_embeddings.json"
     embedding_info = None
     if embedding_file.exists():
         stat = embedding_file.stat()
@@ -68,13 +73,14 @@ async def system_stats(x_admin_token: str | None = Header(default=None)) -> dict
             "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
         }
 
-    # Fetch log
+    # Fetch log — column is started_at (last_run is only a query alias)
     try:
         fetch_log = store.conn.execute(
-            "SELECT * FROM fetch_log ORDER BY last_run DESC LIMIT 10"
+            "SELECT * FROM fetch_log ORDER BY started_at DESC LIMIT 10"
         ).fetchall()
         fetch_log = [dict(r) for r in fetch_log]
-    except Exception:
+    except Exception as e:
+        logger.warning("Could not read fetch_log: %s", e)
         fetch_log = []
 
     # Screener cache count
@@ -95,6 +101,22 @@ async def system_stats(x_admin_token: str | None = Header(default=None)) -> dict
         else None,
     }
 
+    # ML trust gate — signals are blocked when this fails
+    ml_status: dict[str, Any] = {"available": False, "trustworthy": False, "reason": "No model trained yet."}
+    try:
+        from ml_pipeline import get_ml_metrics, predictions_trustworthy
+        ml_metrics = get_ml_metrics()
+        ok, reason = predictions_trustworthy()
+        ml_status = {
+            "available": bool(ml_metrics),
+            "trustworthy": ok,
+            "reason": reason,
+            "metrics": ml_metrics,
+            "signal_generation": "ENABLED" if ok else "BLOCKED",
+        }
+    except Exception as e:
+        ml_status = {"available": False, "trustworthy": False, "reason": f"error: {e}"}
+
     return {
         "timestamp": datetime.now().isoformat(),
         "database": {
@@ -106,6 +128,7 @@ async def system_stats(x_admin_token: str | None = Header(default=None)) -> dict
         "embeddings": embedding_info,
         "fetch_log": fetch_log,
         "discovery_cache": cache_status,
+        "ml_model": ml_status,
     }
 
 
@@ -204,7 +227,7 @@ def _run_job_async(job_id: str, cmd: list[str], cwd: str = None):
 async def refresh_prices(x_admin_token: str | None = Header(default=None)) -> dict:
     _require_admin(x_admin_token)
     job_id = f"refresh-prices-{int(time.time())}"
-    _run_job_async(job_id, ["uv", "run", "python", "main.py", "prices"])
+    _run_job_async(job_id, [sys.executable, "main.py", "prices"])
     return {"job_id": job_id, "status": "started"}
 
 
@@ -212,7 +235,7 @@ async def refresh_prices(x_admin_token: str | None = Header(default=None)) -> di
 async def refresh_financials(x_admin_token: str | None = Header(default=None)) -> dict:
     _require_admin(x_admin_token)
     job_id = f"refresh-financials-{int(time.time())}"
-    _run_job_async(job_id, ["uv", "run", "python", "main.py", "financials"])
+    _run_job_async(job_id, [sys.executable, "main.py", "financials"])
     return {"job_id": job_id, "status": "started"}
 
 
@@ -220,7 +243,7 @@ async def refresh_financials(x_admin_token: str | None = Header(default=None)) -
 async def refresh_news(x_admin_token: str | None = Header(default=None)) -> dict:
     _require_admin(x_admin_token)
     job_id = f"refresh-news-{int(time.time())}"
-    _run_job_async(job_id, ["uv", "run", "python", "main.py", "news"])
+    _run_job_async(job_id, [sys.executable, "main.py", "news"])
     return {"job_id": job_id, "status": "started"}
 
 
@@ -229,7 +252,7 @@ async def run_signals(x_admin_token: str | None = Header(default=None)) -> dict:
     _require_admin(x_admin_token)
     job_id = f"run-signals-{int(time.time())}"
     _run_job_async(job_id, [
-        "uv", "run", "python", "-c",
+        sys.executable, "-c",
         "from signal_engine import run_daily_signal_pipeline; run_daily_signal_pipeline()"
     ])
     return {"job_id": job_id, "status": "started"}
@@ -240,7 +263,7 @@ async def rebuild_embeddings(x_admin_token: str | None = Header(default=None)) -
     _require_admin(x_admin_token)
     job_id = f"rebuild-embeddings-{int(time.time())}"
     _run_job_async(job_id, [
-        "uv", "run", "python", "-c",
+        sys.executable, "-c",
         "from embedding_search import update_embeddings_incremental; update_embeddings_incremental()"
     ])
     return {"job_id": job_id, "status": "started"}
@@ -260,7 +283,7 @@ async def run_full_pipeline(x_admin_token: str | None = Header(default=None)) ->
     """Run prices → signals → embedding update in sequence."""
     _require_admin(x_admin_token)
     job_id = f"full-pipeline-{int(time.time())}"
-    _run_job_async(job_id, ["uv", "run", "python", "main.py", "all"])
+    _run_job_async(job_id, [sys.executable, "main.py", "all"])
     return {"job_id": job_id, "status": "started"}
 
 

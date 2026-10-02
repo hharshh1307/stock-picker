@@ -131,6 +131,45 @@ CREATE TABLE IF NOT EXISTS portfolio_items (
     FOREIGN KEY (symbol) REFERENCES stocks(symbol)
 );
 
+-- ── Auth & Users ─────────────────────────────────────────────────────────────
+
+-- Credentials + Google OAuth users. is_active defaults to 1 so that both the
+-- register and oauth INSERT paths (which omit the column) yield active users.
+CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,
+    email TEXT NOT NULL UNIQUE,
+    password_hash TEXT,             -- empty string for OAuth-only accounts
+    name TEXT,
+    role TEXT NOT NULL DEFAULT 'user',   -- user | admin
+    is_active INTEGER NOT NULL DEFAULT 1,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    last_login TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+
+-- Per-conversation chat transcript, keyed by (user_id, session_id).
+CREATE TABLE IF NOT EXISTS user_chat_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    role TEXT NOT NULL,             -- user | assistant
+    content TEXT NOT NULL,
+    tool_calls TEXT,                -- JSON string
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_chat_history_session ON user_chat_history(user_id, session_id, created_at);
+
+-- Per-user watchlist. ON DELETE CASCADE is a no-op unless foreign_keys is on;
+-- user.py removes rows explicitly.
+CREATE TABLE IF NOT EXISTS user_watchlists (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, symbol)
+);
+CREATE INDEX IF NOT EXISTS idx_watchlists_user ON user_watchlists(user_id);
+
 -- ── Signal RAG Pipeline ──────────────────────────────────────────────────────
 
 -- ML retrieval output: top-K candidates per day × frequency
@@ -473,7 +512,12 @@ class DataStore:
         return [dict(r) for r in rows]
 
     def get_table_counts(self) -> dict[str, int]:
-        tables = ["stocks", "prices", "quarterly_financials", "news", "index_data", "portfolio_items"]
+        tables = [
+            "stocks", "prices", "quarterly_financials", "news", "index_data",
+            "portfolio_items",
+            "signal_candidates", "signal_decisions", "signal_outcomes", "signal_analysis",
+            "users", "user_chat_history", "user_watchlists",
+        ]
         counts = {}
         for t in tables:
             row = self.conn.execute(f"SELECT COUNT(*) as cnt FROM {t}").fetchone()
@@ -557,12 +601,65 @@ class DataStore:
             "ytd_return": round(ytd_return, 2) if ytd_return is not None else None,
         }
 
+    def get_tradable_universe(self) -> list[str]:
+        """
+        Symbols that pass the tradability filter: enough price history, a
+        non-penny latest price, and a minimum average daily traded value.
+
+        Used to restrict signal generation and stock selection to names that
+        could realistically be traded. A screen that surfaces an illiquid
+        smallcap is a trap — the modelled entry price is not achievable at size.
+        """
+        from datetime import timedelta
+        from config import (
+            MIN_AVG_TRADED_VALUE,
+            MIN_LIQUIDITY_LOOKBACK_DAYS,
+            MIN_LATEST_PRICE,
+            MIN_PRICE_HISTORY_DAYS,
+        )
+        cutoff = (date.today() - timedelta(days=MIN_LIQUIDITY_LOOKBACK_DAYS)).isoformat()
+        rows = self.conn.execute(
+            """
+            WITH liq AS (
+                -- Average traded value over the short liquidity window only.
+                SELECT symbol, AVG(close * volume) AS avg_traded_value
+                FROM prices
+                WHERE date >= ?
+                GROUP BY symbol
+            ),
+            hist AS (
+                -- Total history is a separate, longer-window requirement; it must
+                -- not be measured inside the liquidity window above.
+                SELECT symbol, COUNT(*) AS total_days
+                FROM prices
+                GROUP BY symbol
+            ),
+            latest AS (
+                SELECT symbol, MAX(date) AS last_date FROM prices GROUP BY symbol
+            )
+            SELECT l.symbol
+            FROM latest l
+            JOIN prices p
+              ON p.symbol = l.symbol AND p.date = l.last_date
+            JOIN liq q
+              ON q.symbol = l.symbol
+            JOIN hist h
+              ON h.symbol = l.symbol
+            WHERE l.symbol IN (SELECT symbol FROM stocks)
+              AND h.total_days >= ?
+              AND q.avg_traded_value >= ?
+              AND p.adj_close >= ?
+            """,
+            (cutoff, MIN_PRICE_HISTORY_DAYS, MIN_AVG_TRADED_VALUE, MIN_LATEST_PRICE),
+        ).fetchall()
+        return [r["symbol"] for r in rows]
+
     def get_price_series(self, symbol: str, days: int = 365) -> list[dict]:
-        """Get price series for charting."""
+        """Get price series for charting. Includes adj_close (dividend/split adjusted)."""
         from datetime import date, timedelta
         cutoff = (date.today() - timedelta(days=days)).isoformat()
         rows = self.conn.execute(
-            """SELECT date, open, high, low, close, volume
+            """SELECT date, open, high, low, close, adj_close, volume
                FROM prices WHERE symbol = ? AND date >= ?
                ORDER BY date ASC""",
             (symbol, cutoff),

@@ -1,91 +1,108 @@
 # 📊 Project State Snapshot
 
-> **Last Updated:** 2026-04-29
+> **Last Updated:** 2026-10-02
 > **Updated By:** Antigravity (AI Assistant)
 
-## Current Status: 🟡 Active Development — Groww Integration Fixed, Phase 2 In Progress
+## Current Status: 🟡 Active Development — Phase 2 Partially Complete, 5-Month Gap
 
 ---
 
-### What's Running
+### What's Built
 
-| Service | Status | Notes |
+| Component | Status | Notes |
 |---|---|---|
-| Backend (FastAPI) | ✅ Running | localhost:8000 / Railway deployed |
-| Frontend (Next.js) | ✅ Running | localhost:3001 / Vercel deployed |
-| Database (SQLite) | ✅ Active | `stock_picker.db` (~41MB) |
-| AI Agent (GPT-4o) | ✅ Working | 14+ tools, SSE streaming, ReAct loop |
-| Groww Live Sync | 🔴 Was Broken → ✅ Fixed | See below |
+| Backend (FastAPI) | ✅ Built | 7 route groups: discovery, stocks, chat, user, signals, admin, auth |
+| Frontend (Next.js 16) | ✅ Built | Discovery, chat, stock detail, portfolio, signals, admin, auth pages |
+| Database (SQLite) | ✅ Active | `stock_picker.db` (~80MB), WAL mode |
+| AI Agent (Gemini 2.5 Flash) | ⚠️ Built but GEMINI_API_KEY empty | ReAct loop, 13+ tools, SSE streaming |
+| Discovery Engine | ✅ Working | 8 smart buckets, market pulse, sector grid, movers |
+| Data Pipeline | ✅ Built | Stock list, prices (5yr), financials, news, index data |
+| ML Pipeline | ✅ Built (v2) | 14 features, HistGradientBoosting, 3 horizons, time-split validation |
+| Signal Engine | ✅ Built | RAG-style: ML retrieval → AI analysis → BUY/HOLD/SKIP |
+| Price Scheduler | ✅ Built | APScheduler daily at 16:00 IST + startup staleness check |
+| Groww Integration | ✅ Rewritten | TOTP auth, margin, positions, per-symbol lookup |
+| Portfolio Analyzer | ✅ Built | P&L, diversification, concentration, sector allocation |
+| Auth System | ✅ Built | Google OAuth + registration/login pages |
+| Admin Dashboard | ✅ Built | Admin routes + frontend admin page |
+| Backtester | ✅ Built | `backtester.py` |
+| Audit Logger | ✅ Built | `audit_logger.py` |
+| Alternative Assets | ✅ Built | `alternative_assets.py` |
+| Deployment | ✅ Configured | Railway (backend), Vercel (frontend) |
 
 ---
 
-### What Was Fixed (2026-04-29)
+### Uncommitted Changes (IMPORTANT)
 
-**Groww Integration (`groww_integration.py`) — Complete rewrite:**
-- 🔴 **Fixed**: Wrong field names — was reading `avgPrice`, `companyName`, `scripType` (don't exist in API). Now correctly reads `average_price`, `trading_symbol`.
-- 🔴 **Fixed**: Wrong response key — was reading `.get('data', [])`, API actually returns `{ "holdings": [...] }`.
-- 🟠 **Added**: `get_available_margin_details()` — now fetches real buying power (CNC balance available).
-- 🟠 **Added**: `get_user_profile()` — fetches UCC, active_segments, DDPI status.
-- 🟠 **Added**: Per-segment position fetching (`SEGMENT_CASH`, `SEGMENT_FNO` if active).
-- 🟡 **Added**: TOTP auth flow as 1st preference (no daily re-approval needed). Add `GROWW_TOTP_SECRET` to `.env` to activate.
-- 🟡 **Added**: `timeout=10` on all API calls (prevents hangs).
-- 🟢 **Added**: `fetch_position_for_symbol(symbol)` — new on-demand per-stock position lookup.
+**705 lines added across 13 files** — never committed. These appear to be a significant v2 upgrade:
 
-**Agent Tools (`agent_tools.py`) — Updated:**
-- `get_portfolio_analysis` now returns `available_cash_inr`, `account_info`, `intraday_positions`.
-- New tool: `get_groww_position_for_symbol(symbol)` — registered in TOOL_SCHEMAS and dispatcher.
+| File | +Lines | What Changed |
+|---|---|---|
+| `config.py` | +45 | Liquidity filters, benchmark config, universe indices, price history tuning |
+| `data_store.py` | +103 | New queries, schema additions |
+| `fetch_nifty500_list.py` | +140 | Major rewrite — now uses 4 nselib indices instead of niftystocks |
+| `ml_pipeline.py` | +129 | 14 features (was 8), time-based train/test split, regression + classification |
+| `fetch_price_data.py` | +76 | Enhanced fetching |
+| `price_scheduler.py` | +68 | More robust scheduling |
+| `signal_engine.py` | +62 | Enhanced signal pipeline |
+| `portfolio_analyzer.py` | +56 | Better P&L and analytics |
+| `api_routes/admin.py` | +49 | Expanded admin capabilities |
+| `fetch_index_data.py` | +65 | Better index data handling |
+| `market_intelligence.py` | +12 | Minor enhancements |
+| `render.yaml` | +2 | Config tweak |
+| `requirements.txt` | +2 | Dependency update |
 
 ---
 
 ### Data Freshness
 
-| Data Type | Last Refreshed | Record Count | Notes |
-|---|---|---|---|
-| Stock list | Unknown | ~500 | Nifty 500 via nselib |
-| Prices | Unknown | Run `main.py status` | 2yr daily OHLCV |
-| Financials | Unknown | Run `main.py status` | Quarterly |
-| News | Unknown | Run `main.py status` | GNews + RSS |
-| Index data | Unknown | Run `main.py status` | Nifty 500 index |
+| Data Type | DB Size | Notes |
+|---|---|---|
+| Full database | ~80MB | `data/stock_picker.db` |
+| ML predictions | 163KB | `data/ml_predictions.json` |
+| OOT metrics | 787B | `data/oot_metrics.json` |
+| ML models | Unknown | `data/ml_models/` directory |
 
-> ⚠️ Run `uv run python main.py status` to populate actual numbers.
-
----
-
-### Known Issues
-
-- [ ] XIRR / time-weighted returns not implemented in portfolio P&L
-- [ ] Dividend income not tracked
-- [ ] No automated pipeline scheduling (manual `main.py all`)
-- [ ] `GROWW_TOTP_SECRET` not yet in `.env` (TOTP flow dormant until added)
-- [ ] Order placement APIs not implemented (read-only integration)
-- [ ] SQLite may bottleneck at scale (Postgres migration in roadmap)
+> ⚠️ Exact data freshness unknown — run `uv run python main.py status` to check.
 
 ---
 
 ### Environment
 
 - Python 3.12+, Node.js 18+
+- LLM: **Gemini 2.5 Flash** (switched from GPT-4o) via OpenAI-compatible endpoint
 - `.env` requires:
   ```
-  OPENAI_API_KEY=...
-  GROWW_TOKEN=...          # Groww API key
-  GROWW_API_SECRET=...     # Groww API secret (Key+Secret flow)
-  GROWW_TOTP_SECRET=...    # Optional: TOTP base32 secret (no-expiry flow)
+  GEMINI_API_KEY=...           # REQUIRED — currently empty!
+  ADMIN_API_TOKEN=...          # Set to a random token
+  GROWW_TOKEN=...              # Optional: Groww API key
+  GROWW_API_SECRET=...         # Optional: Groww API secret
+  GROWW_TOTP_SECRET=...        # Optional: TOTP for no-expiry auth
   ```
 - Frontend `.env.local`: `NEXT_PUBLIC_API_URL=http://localhost:8000`
 
 ---
 
-### Recent Changes
+### Known Issues
 
-- (2026-04-29) `groww_integration.py` — full rewrite fixing field mapping bugs, adding TOTP, margin, user profile, per-segment positions, per-symbol position lookup
-- (2026-04-29) `agent_tools.py` — wired new Groww fields into `get_portfolio_analysis`, added `get_groww_position_for_symbol` tool
-- (2026-04-27) Alternative assets support (`alternative_assets.py`)
-- (2026-04-22) ML pipeline, backtester, audit logger added
-- (2026-04-21) Phase 1 complete: AI agent, 13 tools, portfolio CRUD, frontend chat
+- [ ] `GEMINI_API_KEY` empty in `.env` — AI agent non-functional
+- [ ] 705 lines of uncommitted changes at risk of loss
+- [ ] XIRR / time-weighted returns not implemented
+- [ ] Dividend income not tracked
+- [ ] Agent conversation memory not persisted across sessions
+- [ ] No automated test suite
+- [ ] No API input validation (Pydantic models)
+- [ ] No error boundaries on frontend
+- [ ] Financial JSON key normalization incomplete
+- [ ] Nifty 500 TRI (Total Return Index) not available from free sources — price-only benchmark used
 
 ---
 
-### Blockers
+### Recent History
 
-- Groww TOTP secret not yet configured — daily re-approval needed for live sync until added
+- (2026-10-02) Memory files updated — 5-month gap since last session
+- (2026-05-01) Agent memory + NVIDIA skills integration
+- (2026-04-29) Groww integration full rewrite, agent tools updated
+- (2026-04-27) Alternative assets support added
+- (2026-04-22) ML pipeline, backtester, audit logger added
+- (2026-04-21) Phase 1 complete, `.agents/` system created
+- (2026-04-20) Project created, first commit

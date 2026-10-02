@@ -19,6 +19,15 @@ from config import (
 from data_store import DataStore
 from models import PriceRecord, FetchLog, FetchStatus, DataSource
 from utils import setup_logger
+from ticker_mapping import nse_to_yahoo
+
+# Retry tuning for the per-ticker recovery pass. The backoff has to be long
+# enough to actually clear a yfinance throttle; measured 0/52 recovered with
+# 2-4s delays versus full data when the same ticker was requested after a pause.
+RETRY_ATTEMPTS = 4
+RETRY_BASE_DELAY_SEC = 8
+RETRY_CIRCUIT_BREAKER = 5
+RETRY_COOLDOWN_SEC = 45
 
 logger = setup_logger(__name__, "fetch_price_data.log")
 
@@ -169,6 +178,73 @@ def run(
             )
             logger.debug(f"Sleeping {delay:.1f}s between batches...")
             time.sleep(delay)
+
+    # Retry pass: yfinance rate-limits aggressively, and a large multi-ticker
+    # batch that returns empty for a ticker is usually throttling, not a
+    # delisting (HDFCBANK/HCLTECH "may be delisted" was a false positive).
+    # Retrying one at a time with a *long* backoff recovers most of these; a
+    # short backoff just keeps the throttle closed (measured: 0/52 recovered at
+    # 2-4s, vs 1241 rows for HDFCBANK when asked once after a pause).
+    if failed_tickers:
+        logger.info(
+            f"Retrying {len(failed_tickers)} failed tickers individually "
+            f"(long backoff)..."
+        )
+        still_failed: list[str] = []
+        consecutive_misses = 0
+        for i, nse_sym in enumerate(list(failed_tickers)):
+            yahoo_sym = nse_to_yahoo(nse_sym)
+            got = False
+            for attempt in range(RETRY_ATTEMPTS):
+                try:
+                    df = download_batch(
+                        [yahoo_sym], period=PRICE_HISTORY_PERIOD
+                    )
+                    if df is None or df.empty:
+                        raise ValueError("empty response")
+                    records = parse_price_df(df, nse_sym, yahoo_sym)
+                    if records:
+                        inserted = store.upsert_prices(records)
+                        total_records += inserted
+                        success_count += 1
+                        logger.info(
+                            f"  recovered {nse_sym} (+{inserted} rows) on attempt {attempt + 1}"
+                        )
+                        got = True
+                        break
+                    raise ValueError("no rows parsed")
+                except Exception as e:
+                    if attempt == RETRY_ATTEMPTS - 1:
+                        logger.debug(f"  gave up on {nse_sym}: {e}")
+                    else:
+                        # Exponential-ish backoff. Throttling needs real idle
+                        # time to clear, not a token gesture.
+                        time.sleep(RETRY_BASE_DELAY_SEC * (attempt + 1) + random.uniform(0, 3))
+            if got:
+                consecutive_misses = 0
+            else:
+                still_failed.append(nse_sym)
+                consecutive_misses += 1
+                # Circuit breaker: if the throttle is clearly still closed,
+                # stop hammering and give the session a real cooldown.
+                if consecutive_misses == RETRY_CIRCUIT_BREAKER:
+                    logger.warning(
+                        f"  {consecutive_misses} consecutive misses — cooling down "
+                        f"{RETRY_COOLDOWN_SEC}s before continuing"
+                    )
+                    time.sleep(RETRY_COOLDOWN_SEC)
+                    consecutive_misses = 0
+            time.sleep(random.uniform(1.0, 2.0))
+            if (i + 1) % 10 == 0:
+                logger.info(
+                    f"  retry progress {i + 1}/{len(failed_tickers)} "
+                    f"(recovered {i + 1 - len(still_failed)})"
+                )
+        recovered = len(failed_tickers) - len(still_failed)
+        logger.info(
+            f"Retry pass recovered {recovered}/{len(failed_tickers)} tickers"
+        )
+        failed_tickers = still_failed
 
     # Log summary
     logger.info(

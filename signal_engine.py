@@ -57,11 +57,19 @@ def retrieve_top_k(store: DataStore, frequency: str, run_date: date) -> list[dic
       Yearly    → ml_1m_score  + outperform_probability (no 1y ML model yet)
       Long-term → ml_1m_score  + outperform_probability (fundamental bias)
     """
-    from ml_pipeline import get_ml_predictions
+    from ml_pipeline import get_ml_predictions, predictions_trustworthy
     preds = get_ml_predictions()
 
     if not preds:
         logger.warning("No ML predictions available. Run ml_pipeline.train_models() first.")
+        return []
+
+    # Refuse to rank candidates from a model that failed out-of-sample
+    # validation. An untrustworthy model produces a ranking that looks exactly
+    # like a good one, so this must block before any signal is generated.
+    trustworthy, reason = predictions_trustworthy()
+    if not trustworthy:
+        logger.error(f"[{frequency}] Signal generation BLOCKED: {reason}")
         return []
 
     k = TOP_K.get(frequency, 15)
@@ -102,12 +110,30 @@ def retrieve_top_k(store: DataStore, frequency: str, run_date: date) -> list[dic
 
     scored.sort(key=lambda x: x["composite"], reverse=True)
 
-    # Filter to only symbols that exist in the stocks table (FK constraint)
+    # Must exist in the stocks table (FK constraint on signal_candidates) and
+    # pass the tradability filter. Ranking an illiquid smallcap into the top-K
+    # produces a signal whose entry price is not achievable at any real size.
     known_symbols = {
-        r["symbol"]
-        for r in store.conn.execute("SELECT symbol FROM stocks").fetchall()
+        r["symbol"] for r in store.conn.execute("SELECT symbol FROM stocks").fetchall()
     }
     scored = [s for s in scored if s["symbol"] in known_symbols]
+
+    tradable = set(store.get_tradable_universe())
+    if not tradable:
+        logger.warning(
+            f"[{frequency}] Tradability filter matched no symbols — not enough price "
+            "history to assess liquidity. Skipping signal run rather than emitting "
+            "untradeable signals."
+        )
+        return []
+
+    before = len(scored)
+    scored = [s for s in scored if s["symbol"] in tradable]
+    if before != len(scored):
+        logger.info(
+            f"[{frequency}] Tradability filter dropped {before - len(scored)} of "
+            f"{before} candidates; {len(tradable)} liquid names available."
+        )
 
     top_k = scored[:k]
 
@@ -162,18 +188,19 @@ def _build_stock_context(store: DataStore, symbol: str) -> str:
 
     # Latest price + 30d + 52w
     latest = store.conn.execute(
-        "SELECT close, date FROM prices WHERE symbol = ? ORDER BY date DESC LIMIT 1",
+        "SELECT close, adj_close, date FROM prices WHERE symbol = ? ORDER BY date DESC LIMIT 1",
         (symbol,),
     ).fetchone()
     if latest:
         lines.append(f"LTP: ₹{latest['close']:.2f} (as of {latest['date']})")
 
     p30 = store.conn.execute(
-        "SELECT close FROM prices WHERE symbol = ? AND date >= ? ORDER BY date ASC LIMIT 1",
+        "SELECT adj_close FROM prices WHERE symbol = ? AND date >= ? ORDER BY date ASC LIMIT 1",
         (symbol, (date.today() - timedelta(days=30)).isoformat()),
     ).fetchone()
-    if p30 and latest:
-        chg30 = ((latest["close"] - p30["close"]) / p30["close"]) * 100
+    if p30 and latest and p30["adj_close"]:
+        # Adjusted so the AI is not shown a dividend gap as a real loss
+        chg30 = ((latest["adj_close"] - p30["adj_close"]) / p30["adj_close"]) * 100
         lines.append(f"30d change: {chg30:+.1f}%")
 
     w52 = store.conn.execute(
@@ -378,20 +405,29 @@ def backfill_outcomes(store: Optional[DataStore] = None) -> int:
         if outcome_date > today:
             continue  # Holding period not over yet
 
-        # Get prices at entry and exit
+        # Entry and exit are selected from actual price rows so the holding
+        # period is measured in TRADING days (HOLDING_DAYS is documented as
+        # trading days; calendar arithmetic was understating short holds by
+        # including weekends). `adj_close` is used so dividend income counts
+        # toward the realised return — the raw close understates total return.
         entry = store.conn.execute(
-            "SELECT close FROM prices WHERE symbol = ? AND date >= ? ORDER BY date ASC LIMIT 1",
+            """SELECT adj_close FROM prices
+               WHERE symbol = ? AND date >= ? ORDER BY date ASC LIMIT 1""",
             (row["symbol"], row["date"]),
         ).fetchone()
         exit_ = store.conn.execute(
-            "SELECT close FROM prices WHERE symbol = ? AND date >= ? ORDER BY date ASC LIMIT 1",
-            (row["symbol"], outcome_date.isoformat()),
+            """SELECT adj_close FROM prices
+               WHERE symbol = ? AND date >= ? ORDER BY date ASC LIMIT 1 OFFSET ?""",
+            (row["symbol"], row["date"], holding_days),
         ).fetchone()
 
         if not entry or not exit_:
             continue
 
-        actual_ret = (exit_["close"] - entry["close"]) / entry["close"] * 100
+        if not entry["adj_close"] or not exit_["adj_close"]:
+            continue
+
+        actual_ret = (exit_["adj_close"] - entry["adj_close"]) / entry["adj_close"] * 100
 
         # Nifty 500 return over same period
         idx_entry = store.conn.execute(
