@@ -48,3 +48,14 @@
 - Implement real-time P&L: cross-reference Groww `average_price` with local price DB
 - Add data freshness indicators to UI
 
+### 2026-05-01 — Agent Memory + NVIDIA Skills Integration
+**Duration:** ~60min
+**What was done:**
+- Enhanced `.agents/memory/` with decision log, learnings, and session tracking
+- Integrated NVIDIA AI/ML skills from build.nvidia.com into `.claude_skills/`
+- Created persistent memory connection between agent decisions and `.agents/memory/learnings.md`
+- Established skill invocation pattern for ReAct loop tool selection
+**Next up:**
+- Test skill integration with agent queries
+- Add automated memory checkpointing after each session
+

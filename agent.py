@@ -3,6 +3,7 @@
 import json
 import os
 from datetime import date
+from pathlib import Path
 from typing import Any, AsyncGenerator, Generator
 
 from dotenv import load_dotenv
@@ -17,6 +18,8 @@ from utils import setup_logger
 
 load_dotenv()
 logger = setup_logger(__name__, "agent.log")
+
+MEMORY_DIR = Path(".agents/memory")
 
 # Token limits
 MAX_CONTEXT_TOKENS = 40000
@@ -111,6 +114,77 @@ class FinancialExpertAgent:
             self.store.conn.commit()
         except Exception as e:
             logger.error(f"Failed to save message to history: {e}")
+
+    def _save_session_log(self, focus_area: str, what_done: list[str], next_up: list[str]) -> None:
+        """Append a session entry to .agents/memory/session-log.md."""
+        if not focus_area:
+            return
+        
+        log_file = MEMORY_DIR / "session-log.md"
+        entry = f"""
+### {date.today().strftime('%Y-%m-%d')} — {focus_area}
+**Duration:** ~Xh
+**What was done:** 
+- {"\n- ".join(what_done)}
+**Next up:**
+- {"\n- ".join(next_up)}
+"""
+        
+        # Read existing log and append
+        existing = ""
+        if log_file.exists():
+            existing = log_file.read_text()
+        
+        # Only add if not already present (check by date+focus)
+        marker = f"### {date.today().strftime('%Y-%m-%d')} — {focus_area}"
+        if marker not in existing:
+            with open(log_file, "w") as f:
+                f.write(entry.strip() + "\n---\n" + existing)
+        else:
+            # Just update the "Next up" section if it exists
+            if "---\n" in existing:
+                parts = existing.split("---\n", 1)
+                if len(parts) == 2:
+                    with open(log_file, "w") as f:
+                        f.write(parts[0] + "\n---\n" + "\n".join(next_up) + "\n" + parts[1])
+            else:
+                with open(log_file, "w") as f:
+                    f.write(entry.strip() + "\n---\n")
+
+    def _update_learnings(self, category: str, learning: str) -> None:
+        """Add a learning entry to .agents/memory/learnings.md under the given category."""
+        log_file = MEMORY_DIR / "learnings.md"
+        
+        # Find existing entry under this category
+        category_marker = f"### {category}"
+        existing = ""
+        if log_file.exists():
+            existing = log_file.read_text()
+        
+        new_entry = f"- **{date.today().strftime('%Y-%m-%d')}**: {learning}\n"
+        
+        if category_marker in existing:
+            # Insert learning after the category header
+            lines = existing.split("\n")
+            insert_idx = None
+            for i, line in enumerate(lines):
+                if line.strip() == category_marker:
+                    insert_idx = i + 1
+                    break
+            if insert_idx is not None:
+                lines.insert(insert_idx, new_entry)
+                with open(log_file, "w") as f:
+                    f.write("\n".join(lines))
+                return
+        
+        # Category doesn't exist yet, add it
+        with open(log_file, "a") as f:
+            if not existing.endswith("\n"):
+                f.write("\n")
+            f.write(f"\n{category_marker}\n{new_entry}")
+            if not existing.endswith("\n---\n") and not existing.strip().endswith("---"):
+                # Preserve existing content
+                pass
 
     def _estimate_tokens(self, text: str) -> int:
         """Rough token estimate (4 chars per token on average)."""
@@ -312,6 +386,11 @@ class FinancialExpertAgent:
             except Exception as e:
                 logger.error(f"Agent error: {e}")
                 yield {"type": "error", "content": str(e)}
+                self._save_session_log(
+                    focus_area="Agent Error",
+                    what_done=[f"Error: {str(e)}"],
+                    next_up=["Investigate error, check logs"]
+                )
                 break
 
     async def stream_response(
@@ -322,7 +401,38 @@ class FinancialExpertAgent:
             yield chunk
 
     def reset_conversation(self) -> None:
-        """Clear conversation history."""
+        """Clear conversation history and save session memory."""
+        # Save session learnings before clearing
+        if self.messages and self.messages[0].get("role") == "system":
+            # Extract the user's main questions and the agent's responses
+            user_messages = [m.get("content", "") for m in self.messages[1::2] if m.get("content")]
+            assistant_messages = [m.get("content", "") for m in self.messages[2::2] if m.get("content")]
+            
+            # Save focus areas and learnings
+            focus_areas = []
+            if user_messages:
+                focus_areas.append(f"User queries: {len(user_messages)} questions")
+            if assistant_messages:
+                # Summarize key topics from assistant responses
+                key_topics = []
+                for msg in assistant_messages[-3:]:  # Last 3 assistant responses
+                    if "RELIANCE" in msg.upper():
+                        key_topics.append("RELIANCE analysis")
+                    if "portfolio" in msg.lower():
+                        key_topics.append("portfolio analysis")
+                    if "sector" in msg.lower():
+                        key_topics.append("sector analysis")
+                if key_topics:
+                    focus_areas.append("Key topics: " + ", ".join(set(key_topics)))
+            
+            self._save_session_log(
+                focus_area="; ".join(focus_areas) if focus_areas else "Conversation session",
+                what_done=[f"Analyzed {len(user_messages)} user queries",
+                          f"Executed tool calls for real data fetching"],
+                next_up=["Review session log for patterns",
+                        "Continue monitoring data freshness"]
+            )
+        
         self.messages = []
 
 

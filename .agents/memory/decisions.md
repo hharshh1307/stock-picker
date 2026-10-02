@@ -41,3 +41,10 @@
 **Decision:** Create `.agents/` with full context, agent personas, memory, planning, and tracking
 **Rationale:** Long-term project needs persistent memory, clear objectives, and specialized agent expertise
 **Impact:** All AI assistants get consistent project context
+
+### 2026-04-29 Decision: Groww integration rewrite
+**Context:** Groww API field mapping bugs causing crashes and wrong data
+**Options:** Quick fixes to field names, complete rewrite following API docs
+**Decision:** Complete rewrite of `groww_integration.py` with correct field mappings
+**Rationale:** Wrong field names (`avgPrice` → `average_price`, `companyName` → `trading_symbol`) and wrong response key (`data` → `holdings`) were causing silent data loss. Full rewrite ensures reliability.
+**Impact:** Groww live portfolio sync now works correctly with proper field mapping and TOTP auth flow

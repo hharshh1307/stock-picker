@@ -17,6 +17,7 @@
 - Tool usage strategy table in the prompt significantly improves tool selection
 - Dynamic context injection (portfolio, plans) makes responses more relevant
 - tiktoken summarization at 40K tokens keeps conversations manageable
+- **Memory persistence**: `.agents/memory/` logs (decisions, learnings, session) survive across agent resets — always check here first for project context
 
 ### Frontend
 - Server components for data-heavy pages (discovery) significantly reduce client JS
@@ -28,3 +29,4 @@
 - Railway auto-deploys from git push — keep main branch clean
 - Vercel preview deployments are useful for frontend testing
 - CORS needs explicit origins — can't use wildcard with credentials
+- **Skills integration**: NVIDIA `.claude_skills/` provide reusable prompt patterns and tool schemas for common tasks
