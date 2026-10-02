@@ -2,18 +2,92 @@
 
 ## Mission
 
-Build **India's best personal AI-powered investment platform** — a tool that combines comprehensive market data, intelligent analysis, and personalized financial planning to help individual investors make informed, data-driven decisions across the Indian equity market and beyond.
+Build **India's best personal AI-powered investment platform** — a semi-automated financial expert that recommends investment decisions based on your portfolio, goals, and risk profile. Powered by a combination of **Data Science**, **Classical ML**, and **AI Engineering**.
 
-## Vision (Long-Term)
+This project is also a **personal learning vehicle** across 4 domains.
 
-A platform where a user can:
-- **Discover** opportunities across stocks, mutual funds, ETFs, and other asset classes
-- **Analyze** any investment with deep fundamentals, technicals, and sentiment data
-- **Plan** their financial future with goal-based, frequency-aware investment strategies
-- **Track** portfolio performance with real-time P&L, risk metrics, and rebalancing suggestions
-- **Chat** with an AI financial expert that knows their portfolio, risk profile, and goals
-- **Act** on ML-powered signals with confidence (RAG pipeline: ML → AI → BUY/HOLD/SKIP)
-- **Learn** from market movements with personalized alerts and educational insights
+---
+
+## 🧠 Learning Goals (Why This Project Exists)
+
+This project isn't just a product — it's a structured way to gain deep, hands-on expertise across four interconnected fields by building something real.
+
+### 1. 📈 Core ML (Classical Machine Learning)
+**Goal:** Understand what ML models we're using, why, and how they work.
+
+**What we're building:**
+- **HistGradientBoosting** (scikit-learn) — not deep learning, not LLMs. Classical tabular ML.
+  - *Why this model:* Stock data is tabular (rows = stocks, columns = features). Gradient boosting is the gold standard for tabular data. It outperforms neural nets on structured data.
+  - *What it predicts:* "Will this stock outperform the Nifty 500 index over the next 1 day / 1 week / 1 month?"
+  - *Two model types:* Regressor (predicts % return) + Classifier (predicts outperform yes/no)
+- **14 engineered features:** Price momentum (1d/5d/20d/90d returns), volatility, SMA distances, volume ratios, RSI, MACD, Bollinger Band %B, 52-week high/low distance, relative strength vs index
+- **Time-based train/test split:** Train on data before July 2025, test on data after. No data leakage — this is how real quant funds validate.
+
+**What you'll learn:**
+- Feature engineering for financial data
+- Why gradient boosting > neural nets for tabular data
+- Train/test methodology that doesn't lie to you
+- How to evaluate ML models honestly (Recall@K, alpha, ROC-AUC)
+
+### 2. 📊 Data Science (Data Processing & Understanding)
+**Goal:** Understand how raw market data becomes actionable intelligence.
+
+**What we're building:**
+- **Data pipeline:** Raw NSE data → cleaned → stored in SQLite → features engineered → ML predictions
+- **5 data sources:** yfinance (prices), nselib (stock lists), GNews (news), RSS feeds, screener.in
+- **Discovery engine:** 8 "smart buckets" computed from raw data (momentum leaders, beaten-down stocks, volume surges, revenue rockets, etc.)
+- **Market intelligence:** Breadth analysis, sector performance, top movers
+
+**What you'll learn:**
+- ETL pipeline design (Extract → Transform → Load)
+- Data quality issues in real financial data (missing values, stale tickers, corporate actions)
+- How to compute financial metrics from raw OHLCV data
+- SQL as the backbone of data analysis
+
+### 3. 🤖 AI Engineering (Agents, Loops, Intelligence)
+**Goal:** Build progressively smarter AI systems — from simple chat to self-learning pipelines.
+
+**What we're building (progressive roadmap):**
+1. ✅ **ReAct Agent** — Single agent with 13+ tools, tool-calling loop (already built)
+2. ✅ **RAG Signal Pipeline** — ML retrieval → AI generation → structured output (already built)
+3. 🔨 **Portfolio-aware agent** — Agent that knows your holdings, P&L, goals
+4. 🔮 **Intent classification** — Route queries to specialized flows
+5. 🔮 **Self-learning loop** — Signal outcomes feed back to improve future recommendations
+6. 🔮 **Multi-agent orchestration** — Specialized agents (analyst, risk manager, portfolio optimizer)
+7. 🔮 **Memory & context management** — Persistent conversation, user preference learning
+
+**What you'll learn:**
+- Agent design patterns (ReAct, tool-calling, RAG)
+- Prompt engineering for financial analysis
+- Streaming responses (SSE)
+- Building feedback loops (signal → decision → outcome → learning)
+- Evaluation of AI system quality
+
+### 4. 💰 Finance Learning (Domain Knowledge)
+**Goal:** Build foundational understanding of financial instruments and investment strategy.
+
+**What you'll learn through building:**
+- **Stocks:** What moves prices, how to read financial statements, what P/E, P/B, ROE mean
+- **Mutual Funds:** NAV, expense ratios, direct vs regular, SIP vs lump sum
+- **Options:** Calls/puts, strike price, expiry, basic strategies (covered calls, protective puts)
+- **Other instruments:** ETFs, bonds, gold, REITs, fixed deposits
+- **Investment timing:** SIP (systematic investment plan), market timing myths, dollar-cost averaging
+- **Risk management:** Diversification, portfolio allocation, correlation, drawdown
+- **Indian market specifics:** SEBI regulations, LTCG/STCG tax, NSE/BSE mechanics, settlement cycles
+
+---
+
+## 🎯 End Goal
+
+A **semi-automated financial expert** that:
+1. **Ingests** real-time market data automatically (prices, news, financials)
+2. **Analyzes** using ML models + AI reasoning — not just one or the other
+3. **Recommends** specific BUY/HOLD/SELL decisions with clear rationale
+4. **Personalizes** to YOUR portfolio, risk tolerance, and financial goals
+5. **Learns** from outcomes — was the recommendation right? Feed that back.
+6. **Teaches** you — explains the "why" behind every recommendation in plain language
+
+The human remains in the loop for final decisions. The system does the heavy lifting of research, analysis, and monitoring.
 
 ---
 
@@ -42,21 +116,17 @@ A platform where a user can:
 - **Watchlist feature** — save and monitor stocks
 - **Stock comparison UI** — side-by-side view (backend already supports it)
 
-### What's Next (Phase 3 🔮)
+### Phase 3: Intelligence & Multi-Asset 🔮
 - Mutual fund support (AMFI NAV data)
-- News sentiment analysis (NLP/FinBERT)
-- Anomaly detection (unusual price/volume patterns)
-- Portfolio optimization (mean-variance, rebalancing)
-- Automated alerts & watchlists
-- Global market context (US markets, crypto, commodities)
-- Tax-aware recommendations (LTCG/STCG impact)
-- Goal-based financial planning
+- Self-learning signal loop (outcomes → model retraining)
+- News sentiment analysis (FinBERT)
+- Portfolio optimization (mean-variance)
+- Automated alerts
+- Tax-aware recommendations
 
-### Phase 4 (Future 💎)
-- Postgres migration for multi-user scale
-- API rate limiting & versioning
-- PWA / mobile app
-- Community features
+### Phase 4: Scale & Polish 💎
+- Postgres migration, API hardening, test suite
+- PWA / mobile, community features
 - Premium data sources
 
 ---
@@ -65,23 +135,21 @@ A platform where a user can:
 
 | Metric | Target | Current |
 |--------|--------|---------|
-| Data freshness | Prices < 1 day old | Auto-scheduler built, freshness unknown |
-| Stock coverage | 500+ (Nifty 500) | ~500 stocks (4 NSE indices) |
-| AI response quality | Accurate, cited, actionable | Gemini 2.5 Flash — needs GEMINI_API_KEY |
-| ML signal quality | Recall@K > 60%, alpha > 0 | Built, metrics in `oot_metrics.json` |
-| Portfolio tracking accuracy | 100% P&L accuracy | Basic (no XIRR yet) |
-| Frontend performance | < 2s page load | Unknown (needs profiling) |
-| Data quality score | > 95% completeness | Unknown (needs dashboard) |
-| Test coverage | > 70% | 0% (no test suite) |
+| Data freshness | Prices < 1 day old | Auto-scheduler built |
+| Stock coverage | 500+ (Nifty 500) | ~500 stocks |
+| ML signal quality | Recall@K > 60%, alpha > 0 | Built, needs validation |
+| AI recommendation quality | Accurate, cited, actionable | Gemini 2.5 Flash |
+| Portfolio tracking accuracy | 100% P&L, XIRR | Basic (no XIRR yet) |
+| Learning progress | Document learnings per session | Starting now |
 
 ---
 
 ## Core Principles
 
-1. **Data first** — Every recommendation must be backed by real data, never hallucinated
-2. **Personal context** — The AI must know the user's portfolio, risk tolerance, and goals
-3. **Indian market focus** — INR formatting, SEBI compliance disclaimers, NSE/BSE context
-4. **Cost efficient** — Use free/cheap data sources; Gemini Flash for most queries
-5. **Progressive complexity** — Start simple, add sophistication over time
-6. **Production quality** — Not a toy; this is a daily-use financial tool
-7. **ML with integrity** — Time-based train/test splits, no data leakage, honest metrics
+1. **Data first** — Every recommendation backed by real data, never hallucinated
+2. **Learn by building** — Every feature is a learning opportunity in ML/DS/AI/Finance
+3. **Human in the loop** — Semi-automated, not fully automated. YOU decide.
+4. **Indian market focus** — INR formatting, SEBI compliance, NSE/BSE context
+5. **Honest ML** — Time-based splits, no data leakage, report real metrics
+6. **Progressive complexity** — Start simple, add sophistication as understanding grows
+7. **Production quality** — Not a toy; this is a daily-use financial tool
